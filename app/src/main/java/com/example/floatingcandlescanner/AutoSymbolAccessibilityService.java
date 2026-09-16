@@ -54,7 +54,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private boolean scanBusy=false;
     private WindowManager wm;
     private LinearLayout statusBox;
-    private TextView statusText, symbolText, timingText, liveText;
+    private TextView statusText, symbolText, timingText, liveText, infoDetails;
     private LinearLayout signalCard;
     private boolean infoCardPinned=false;
     private OnlineLearner learner;
@@ -82,6 +82,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private int lastSignalHorizon=0;
     private int lastWinRate=-1;
     private int lastWinRateSamples=0;
+    private String lastLiveDirection="";
+    private int lastLivePercent=0;
+    private String lastLiveStatus="AI LIVE • starting";
     private SignalResult lastNotifiedSignal;
     private int lastNotifiedHorizon=1;
 
@@ -342,6 +345,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private void updateTimingText(long now,long nextBoundary){
         main.post(()->{
             refreshSignalDisplay(now);
+            refreshInfoCard(now);
             if(timingText==null)return;
             if(nextBoundary<=0L){
                 timingText.setText("Candle time unavailable");
@@ -529,11 +533,14 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             showStatusOverlay("READY");
             boolean buy=r.buyProbability>=r.sellProbability;
             int pct=Math.max(r.buyProbability,r.sellProbability);
+            lastLiveDirection=buy?"BUY":"SELL";
+            lastLivePercent=pct;
             if(liveText!=null){
                 int learned=boardLearner==null?0:boardLearner.totalSamples();
                 if(quick!=null && quick.highChance){
                     boolean qb="BUY".equals(quick.label);
                     showQuickSignalCard(quick,horizon);
+                    lastLiveStatus="HIGH CHANCE "+quick.label+" "+quick.score+"% • "+quick.reason;
                     liveText.setText("HIGH CHANCE "+quick.label+" "+quick.score+"% • "+tradeDuration(horizon)+
                             " • "+quick.confirmations+"/6 • STABLE "+quick.stableScans+
                             (prefs.getBoolean("broker_board_learning",true)?" • BOARD "+learned:""));
@@ -544,6 +551,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                     }
                 }else{
                     String q=quick==null?"":(" • NO TRADE "+quick.confirmations+"/6");
+                    lastLiveStatus="AI LIVE • "+lastLiveDirection+" "+pct+"% • M"+horizon+q;
                     liveText.setText("AI LIVE 1s • "+(buy?"BUY ":"SELL ")+pct+"% • M"+horizon+q+
                             (prefs.getBoolean("broker_board_learning",true)?" • BOARD "+learned:""));
                     liveText.setTextColor(buy?Color.rgb(134,239,172):Color.rgb(252,165,165));
@@ -552,6 +560,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                         statusText.setTextColor(Color.rgb(251,191,36));
                     }
                 }
+                refreshInfoCard(System.currentTimeMillis());
             }
         });
     }
@@ -730,11 +739,10 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         card.addView(title);
 
         TextView details=new TextView(this);
-        details.setText("Chart: "+currentAsset()+"\nTimeframe: M"+horizon+
-                "\nRecommended trade: "+tradeDuration(horizon)+
-                "\nStatus: scanning now\nHIGH CHANCE / MOST SURE will appear automatically after safety checks.");
         details.setTextSize(13); details.setTextColor(Color.WHITE);
         card.addView(details);
+        infoDetails=details;
+        refreshInfoCard(System.currentTimeMillis());
 
         Button close=new Button(this);
         close.setText("CLOSE"); close.setAllCaps(false);
@@ -743,6 +751,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             infoCardPinned=false;
             try{wm.removeView(card);}catch(Exception ignored){}
             if(signalCard==card)signalCard=null;
+            if(infoDetails==details)infoDetails=null;
         });
 
         WindowManager.LayoutParams cp=new WindowManager.LayoutParams(
@@ -752,6 +761,25 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 PixelFormat.TRANSLUCENT);
         cp.gravity=Gravity.CENTER_HORIZONTAL|Gravity.TOP; cp.y=dp(150);
         try{wm.addView(card,cp);signalCard=card;}catch(Exception ignored){}
+    }
+
+    private void refreshInfoCard(long now){
+        if(!infoCardPinned || infoDetails==null)return;
+        int horizon=Math.max(1,selectedTimeframeMinutes());
+        long next=nextBoundary(now,horizon);
+        String finalSignal=lastDirection.isEmpty()?"FINAL: waiting for completed candle"
+                :"FINAL: "+lastDirection+" "+lastDirectionPercent+"% • ENTRY "+clock(predictionTargetStartMs);
+        String live=lastLiveDirection.isEmpty()?lastLiveStatus
+                :"AI LIVE: "+lastLiveDirection+" "+lastLivePercent+"% • 1s refresh";
+        infoDetails.setText(
+                "Chart: "+currentAsset()+" • M"+horizon+"\n"+
+                "Recommended trade: "+tradeDuration(horizon)+"\n\n"+
+                live+"\n"+
+                finalSignal+"\n"+
+                entryState(now,predictionTargetStartMs)+"\n"+
+                winRateText()+"\n\n"+
+                "NEXT CANDLE: "+clock(next)+" • "+countdown(next-now)+"\n"+
+                "LIVE = 1s AI refresh • FINAL = after candle close");
     }
 
     private String pressureLine(SignalResult r){
@@ -1104,7 +1132,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(signalCard!=null){try{wm.removeView(signalCard);}catch(Exception ignored){}}
             if(statusBox!=null){try{wm.removeView(statusBox);}catch(Exception ignored){}}
         }
-        signalCard=null; infoCardPinned=false; statusBox=null; statusText=null; symbolText=null; timingText=null; liveText=null;
+        signalCard=null; infoCardPinned=false; infoDetails=null; statusBox=null; statusText=null; symbolText=null; timingText=null; liveText=null;
     }
 
     private String collectVisibleText(AccessibilityNodeInfo root){
