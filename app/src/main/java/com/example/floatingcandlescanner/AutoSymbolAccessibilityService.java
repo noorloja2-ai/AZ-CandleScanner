@@ -1,6 +1,9 @@
 package com.example.floatingcandlescanner;
 
 import android.accessibilityservice.AccessibilityService;
+import android.animation.AnimatorSet;
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 import android.app.*;
 import android.content.*;
 import android.graphics.*;
@@ -645,30 +648,54 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         ImageView scanBubble=new ImageView(this);
         scanBubble.setImageResource(R.mipmap.ic_launcher);
         scanBubble.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        scanBubble.setContentDescription("Tap to scan candle. Drag to move.");
+        scanBubble.setContentDescription("Tap to refresh. Long press for information. Drag to move.");
         scanBubble.setClickable(true);
         FrameLayout.LayoutParams scanLp=new FrameLayout.LayoutParams(dp(84),dp(84));
         scanLp.gravity=Gravity.CENTER;
         bubbleWrap.addView(scanBubble,scanLp);
+
+        // Gentle cyber pulse keeps the shortcut alive without rotating the AZ letters.
+        ObjectAnimator pulseX=ObjectAnimator.ofFloat(scanBubble,View.SCALE_X,1.0f,1.08f);
+        ObjectAnimator pulseY=ObjectAnimator.ofFloat(scanBubble,View.SCALE_Y,1.0f,1.08f);
+        ObjectAnimator glow=ObjectAnimator.ofFloat(scanBubble,View.ALPHA,.82f,1.0f);
+        pulseX.setDuration(900L); pulseY.setDuration(900L); glow.setDuration(900L);
+        pulseX.setRepeatCount(ValueAnimator.INFINITE);
+        pulseY.setRepeatCount(ValueAnimator.INFINITE);
+        glow.setRepeatCount(ValueAnimator.INFINITE);
+        pulseX.setRepeatMode(ValueAnimator.REVERSE);
+        pulseY.setRepeatMode(ValueAnimator.REVERSE);
+        glow.setRepeatMode(ValueAnimator.REVERSE);
+        AnimatorSet cyberPulse=new AnimatorSet();
+        cyberPulse.playTogether(pulseX,pulseY,glow);
+        cyberPulse.start();
 
         // Reliable tap-versus-drag handling. Small finger movement is still a TAP.
         final int touchSlop=ViewConfiguration.get(this).getScaledTouchSlop();
         scanBubble.setOnTouchListener(new View.OnTouchListener(){
             int startX,startY;
             float downX,downY;
-            boolean dragging;
+            boolean dragging,longPressed;
+            final Runnable openInformation=()->{
+                if(dragging)return;
+                longPressed=true;
+                showInfoCard();
+            };
             @Override public boolean onTouch(View v,MotionEvent e){
                 switch(e.getActionMasked()){
                     case MotionEvent.ACTION_DOWN:
                         startX=lp.x; startY=lp.y;
                         downX=e.getRawX(); downY=e.getRawY();
-                        dragging=false;
+                        dragging=false; longPressed=false;
+                        main.postDelayed(openInformation,ViewConfiguration.getLongPressTimeout());
                         v.setPressed(true);
                         return true;
                     case MotionEvent.ACTION_MOVE:
                         float dx=e.getRawX()-downX;
                         float dy=e.getRawY()-downY;
-                        if(!dragging && (Math.abs(dx)>touchSlop || Math.abs(dy)>touchSlop)) dragging=true;
+                        if(!dragging && (Math.abs(dx)>touchSlop || Math.abs(dy)>touchSlop)){
+                            dragging=true;
+                            main.removeCallbacks(openInformation);
+                        }
                         if(dragging){
                             lp.x=Math.max(0,startX-(int)dx);
                             lp.y=Math.max(0,startY+(int)dy);
@@ -676,14 +703,15 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                         }
                         return true;
                     case MotionEvent.ACTION_UP:
+                        main.removeCallbacks(openInformation);
                         v.setPressed(false);
-                        if(!dragging){
-                            showInfoCard();
+                        if(!dragging && !longPressed){
                             runManualScan();
                             v.performClick();
                         }
                         return true;
                     case MotionEvent.ACTION_CANCEL:
+                        main.removeCallbacks(openInformation);
                         v.setPressed(false);
                         return true;
                     default:

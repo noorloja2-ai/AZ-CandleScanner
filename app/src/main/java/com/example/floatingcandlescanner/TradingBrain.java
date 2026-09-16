@@ -112,6 +112,40 @@ public final class TradingBrain {
                 d,y,r,body,upper,lower,s,k,trend);
         PressurePatternEngine.Result pressure = PressurePatternEngine.analyze(
                 d,y,r,body,upper,lower,s,k,trend);
+
+        /*
+         * Twelve-method M1 confluence model.  These are deliberately grouped
+         * into independent families so the same candle shape is not counted
+         * repeatedly as several confirmations.  Pixel-derived EMA/RSI/Fibonacci
+         * values are context proxies; they are never presented as exact broker
+         * indicator readings.
+         */
+        double mStructure = clamp(.55*trend + .45*structure,-1,1);                 // 1
+        double mLevel = clamp(supportResistance,-1,1);                            // 2
+        double mCandle = clamp((pattern.directionalScore
+                + candleKnowledge.directionalScore + bible.directionalScore)/3.0,-1,1); // 3
+        double mPriceAction = clamp(priceAction.directionalScore,-1,1);            // 4
+        double mBreakRetest = clamp(.62*breakout + .38*pullback,-1,1);             // 5
+        double mLiquidity = clamp(liquidity.directionalScore,-1,1);                // 6
+        double mBosChoch = clamp(confirmation.directionalScore,-1,1);              // 7
+        double mEmaContext = clamp(.58*trend + .42*shortBias,-1,1);                // 8
+        double mRsiMomentum = clamp(.62*momentum + .38*acceleration
+                - .22*Math.signum(momentum)*exhaustion,-1,1);                      // 9
+        double mFibContext = clamp(advanced.directionalScore,-1,1);                // 10
+        double mTimeframe = clamp(.45*trend + .35*structure + .20*recent5,-1,1);  // 11
+        double mLearned = learner==null ? 0.0 :
+                (learner.recentPerformanceHealthy(h) ? shortBias*.55 : -shortBias*.30); // 12
+
+        double methodScore = clamp(
+                .13*mStructure + .10*mLevel + .11*mCandle + .09*mPriceAction
+                + .09*mBreakRetest + .09*mLiquidity + .10*mBosChoch
+                + .07*mEmaContext + .06*mRsiMomentum + .05*mFibContext
+                + .07*mTimeframe + .04*mLearned,-1,1);
+        int methodConfirmations = confirmationCount(Math.signum(methodScore), .16,
+                mStructure,mLevel,mCandle,mPriceAction,mBreakRetest,mLiquidity,
+                mBosChoch,mEmaContext,mRsiMomentum,mFibContext,mTimeframe,mLearned);
+        boolean methodAgreement = Math.abs(methodScore)>=.22 && methodConfirmations>=5;
+        boolean methodStrong = Math.abs(methodScore)>=.38 && methodConfirmations>=7;
         double patternSrConfluence = 0.0;
         if(Math.signum(pattern.reversalScore)!=0 &&
                 Math.signum(pattern.reversalScore)==Math.signum(supportResistance))
@@ -195,6 +229,7 @@ public final class TradingBrain {
                 + .96*professional.directionalScore + .72*liquidity.directionalScore + .82*confirmation.directionalScore
                 + .64*uploaded.directionalScore + .42*bible.directionalScore
                 + .92*history.directionalScore + 1.02*pressure.directionalScore
+                + 1.05*methodScore
                 - .18*strategy.riskPenalty - .26*next.uncertainty - .20*advanced.uncertainty
                 - .14*candleKnowledge.uncertainty - .10*bible.uncertainty - .10*pressure.uncertainty - .08*bible.riskPenalty);
         double shortWeight=.46-h*.04;
@@ -216,6 +251,7 @@ public final class TradingBrain {
                 + .10*next.confidence + .10*advanced.confidence + .11*priceAction.confidence
                 + .09*reference.confidence + .10*candleKnowledge.confidence + .11*professional.confidence
                 + .08*liquidity.confidence + .09*confirmation.confidence + .07*uploaded.confidence + .05*bible.confidence + .09*history.confidence + .10*pressure.confidence + .05*patternSrConfluence
+                + (methodStrong ? .10 : methodAgreement ? .05 : -.06)
                 - .20*strategy.riskPenalty - .07*bible.riskPenalty
                 - .18*next.uncertainty - .14*advanced.uncertainty - .16*priceAction.uncertainty
                 - .13*reference.uncertainty - .15*candleKnowledge.uncertainty - .17*professional.uncertainty
@@ -301,10 +337,10 @@ public final class TradingBrain {
         String label="WAIT";
 
         boolean consensusOk = !highAccuracy || patternOverride || strategyOverride || nextCandleOverride || advancedOverride || priceActionOverride || referenceOverride || candleKnowledgeOverride || professionalOverride || liquidityOverride || confirmationOverride || uploadedOverride || bibleOverride || historyOverride || pressureOverride ||
-                (coreAgreement && disagreement <= .20);
+                methodStrong || (coreAgreement && disagreement <= .20);
         // High Accuracy now uses the requested 3-factor entry gate: candle/setup,
         // level/context and trend/momentum confirmation from recent history.
-        boolean historyEntryGate = !highAccuracy || history.confirmations >= 3 || historyOverride
+        boolean historyEntryGate = !highAccuracy || methodStrong || history.confirmations >= 3 || historyOverride
                 || (pressure.confirmations >= 3 && pressure.directional()
                     && (Math.signum(pressure.directionalScore)==Math.signum(shortBias) || pressureOverride));
 
@@ -357,11 +393,20 @@ public final class TradingBrain {
         if(bible.strong()) regime += " • BIBLE "+bible.name;
         if(history.directional()) regime += " • HISTORY "+history.confirmations+"/4 "+history.name;
         if(pressure.directional()) regime += " • PRESSURE "+pressure.buyerPressure+"B/"+pressure.sellerPressure+"S "+pressure.name;
+        regime += " • 12M "+methodConfirmations+"/12";
         if(professional.falseBreakout) regime += " • FALSE BREAKOUT";
 
         return new SignalResult(
                 label,strength,buy-sell,bp,sp,confidence,regime,raw,
                 setupQuality,structureForLearning,explanation);
+    }
+
+    private static int confirmationCount(double side,double minimum,double... methods){
+        if(side==0)return 0;
+        int count=0;
+        for(double value:methods)
+            if(Math.abs(value)>=minimum && Math.signum(value)==side)count++;
+        return count;
     }
 
     private static String explain(

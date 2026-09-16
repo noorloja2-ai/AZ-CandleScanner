@@ -1,0 +1,13 @@
+CandleScanner v15.6 — Cyber AZ + Long-Press Information + 12 Methods
+
+- New luminous 3D cyber AZ launcher and floating shortcut logo.
+- Gentle animated neon pulse on the floating AZ shortcut.
+- Single press refreshes/scans only.
+- Long press opens the detailed information box.
+- Information stays open until CLOSE is pressed.
+- Added explicit 12-method M1 confluence with independent confirmation counting.
+- High Accuracy requires strong agreement; weak or conflicting evidence remains WAIT.
+- Preserves v15.5 live chart/timeframe, BUY/SELL percentage, final entry, win rate,
+  countdown, Candlestick Bible knowledge, self-learning and community sync.
+
+Signals are estimates, not guarantees. The app does not place trades automatically.
