@@ -52,13 +52,13 @@ public class MainActivity extends Activity {
         brand.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(brand);
 
-        TextView title=tx("BUY / SELL Entry Signal v15.0 PERMANENT SERVER UPDATE AZ",22,Color.WHITE);
+        TextView title=tx("BUY / SELL Entry Signal v15.1 SAFER HIGH CHANCE AZ",22,Color.WHITE);
         title.setTypeface(null,1);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(title);
 
         TextView d=tx(
-                "v15.0 Permanent Update Edition: keeps every v14.9 Quick Decision, broker-board, pressure/pattern and self-learning feature, and adds the permanent GitHub in-app update channel. Screenshots and broker credentials are never stored; no automatic trading.",
+                "v15.1 Safer Signal Edition: adds NO TRADE protection, clearer HIGH CHANCE reasons and the recommended trade duration for M1–M5. It keeps Quick Decision, broker-board learning, self-learning and the permanent GitHub update channel. Screenshots and broker credentials are never stored; no automatic trading.",
                 14,Color.rgb(148,163,184));
         d.setPadding(0,dp(8),0,dp(16));
         root.addView(d);
@@ -162,7 +162,7 @@ public class MainActivity extends Activity {
         root.addView(timeframeSpinner);
 
         TextView timeframeNote=tx(
-                "AUTO follows the timeframe exposed by the broker. If a canvas-based broker hides it, AUTO keeps scanning with the last detected timeframe; on first use the visible fallback is M1. Choose M1–M5 here whenever you want to force the exact timeframe.",
+                "AUTO follows the timeframe exposed by the broker. If a canvas-based broker hides it, AUTO keeps the last detected timeframe; on first use the fallback is M1. Recommended duration: M1=60s, M2=120s, M3=180s, M4=240s, M5=300s. Enter only after the completed-candle signal.",
                 12,Color.rgb(251,191,36));
         timeframeNote.setPadding(0,0,0,dp(8));
         root.addView(timeframeNote);
@@ -277,7 +277,7 @@ public class MainActivity extends Activity {
         root.addView(soundNote);
 
         TextView refreshNote=tx(
-                "Live AI refresh: every 1 second. v15.0 can show a provisional QUICK BUY/SELL after 3 stable scans and multi-factor confirmation; the official entry signal and sound are still locked to the completed candle.",
+                "Live AI refresh: every 1 second. v15.1 shows QUICK BUY/SELL only after stable multi-factor confirmation and blocks conflicting, flat, doji, extreme-chase and abnormal-volatility conditions as NO TRADE. The official entry signal and sound remain locked to the completed candle.",
                 12,Color.rgb(125,211,252));
         refreshNote.setPadding(0,0,0,dp(8));
         root.addView(refreshNote);
