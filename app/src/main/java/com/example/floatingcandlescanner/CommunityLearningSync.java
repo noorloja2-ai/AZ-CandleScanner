@@ -29,9 +29,9 @@ import java.util.UUID;
 public final class CommunityLearningSync {
     private static final String PREF = "community_learning_v1";
     private static final String CONFIG_URL =
-            "https://raw.githubusercontent.com/anamul22-1995/m1-signal-bot/main/community-learning.json";
+            "https://raw.githubusercontent.com/noorloja2-ai/AZ-CandleScanner/main/community-learning.json";
     private static final String DEFAULT_MODEL_URL =
-            "https://raw.githubusercontent.com/anamul22-1995/m1-signal-bot/main/community-model.json";
+            "https://raw.githubusercontent.com/noorloja2-ai/AZ-CandleScanner/main/community-model.json";
     private static final int MAX_QUEUE = 200;
     private static final long CONFIG_REFRESH_MS = 6L * 60L * 60L * 1000L;
     private static final long MODEL_REFRESH_MS = 15L * 60L * 1000L;
