@@ -1,0 +1,8 @@
+CandleScanner v15.4 — Keep AZ Information Open
+
+- Touch the floating AZ logo once to open its information panel.
+- The panel is pinned and remains visible until CLOSE is pressed.
+- Background scan refreshes and NO TRADE results cannot remove or replace it.
+- Scanning and learning continue while the panel stays open.
+
+Signals are estimates, not guarantees. The app does not place trades automatically.
