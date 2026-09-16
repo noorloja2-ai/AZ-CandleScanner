@@ -7,12 +7,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
       - name: Restore permanent signing key
@@ -26,13 +26,13 @@ jobs:
           AZ_KEY_ALIAS: candlescanner
           AZ_KEY_PASSWORD: ${{ secrets.AZ_KEY_PASSWORD }}
         run: gradle :app:assembleRelease --stacktrace
-      - run: cp app/build/outputs/apk/release/app-release.apk CandleScanner_v15.0.apk
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - run: cp app/build/outputs/apk/release/app-release.apk CandleScanner_v15.1.apk
+      - uses: actions/upload-artifact@v4
         with:
-          name: CandleScanner-v15.0-signed
-          path: CandleScanner_v15.0.apk
+          name: CandleScanner-v15.1-signed
+          path: CandleScanner_v15.1.apk
       - name: Publish GitHub release
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create v15.0 CandleScanner_v15.0.apk --title "CandleScanner v15.0" --notes "Permanent GitHub in-app update channel. Keeps all v14.9 learning features." --latest || gh release upload v15.0 CandleScanner_v15.0.apk --clobber
+        run: gh release create v15.1 CandleScanner_v15.1.apk --title "CandleScanner v15.1" --notes-file CHANGELOG_v15.1.txt --latest || gh release upload v15.1 CandleScanner_v15.1.apk --clobber
