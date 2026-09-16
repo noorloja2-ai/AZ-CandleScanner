@@ -29,8 +29,8 @@ import java.util.regex.Pattern;
  * Screen-share-free broker chart scanner.
  *
  * Android 11+ Accessibility screenshots are analyzed in memory. A small
- * TYPE_ACCESSIBILITY_OVERLAY status box stays above the broker and shows
- * next-candle BUY/SELL probability percentages. The service never stores screenshots or credentials.
+ * TYPE_ACCESSIBILITY_OVERLAY AZ logo stays above the broker. Signal details
+ * appear only for qualified HIGH CHANCE setups. The service never stores screenshots or credentials.
  */
 public class AutoSymbolAccessibilityService extends AccessibilityService {
     private static final String CCY = "EUR|GBP|USD|JPY|CHF|AUD|NZD|CAD|SGD|HKD|CNH|CNY|INR|BRL|MXN|ZAR|TRY|SEK|NOK|DKK|PLN|HUF|CZK|AED|SAR";
@@ -65,6 +65,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private CandleVision.Analysis lastAnalysis;
     private long lastAlertAt=0L;
     private String lastAlertKey="";
+    private String lastQuickPopupKey="";
     private String lastActivePackage="";
     private long lastAutoBoundaryMs=Long.MIN_VALUE;
     private int scheduledTimeframeMinutes=-1;
@@ -529,19 +530,24 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 int learned=boardLearner==null?0:boardLearner.totalSamples();
                 if(quick!=null && quick.highChance){
                     boolean qb="BUY".equals(quick.label);
-                    liveText.setText("QUICK "+quick.label+" "+quick.score+"% • M"+horizon+
+                    showQuickSignalCard(quick,horizon);
+                    liveText.setText("HIGH CHANCE "+quick.label+" "+quick.score+"% • "+tradeDuration(horizon)+
                             " • "+quick.confirmations+"/6 • STABLE "+quick.stableScans+
                             (prefs.getBoolean("broker_board_learning",true)?" • BOARD "+learned:""));
                     liveText.setTextColor(qb?Color.rgb(74,222,128):Color.rgb(248,113,113));
                     if(statusText!=null){
-                        statusText.setText("HIGH-CONFIDENCE QUICK "+quick.label+" • "+quick.reason);
+                        statusText.setText("HIGH CHANCE "+quick.label+" • TRADE "+tradeDuration(horizon)+"\n"+quick.reason);
                         statusText.setTextColor(qb?Color.rgb(134,239,172):Color.rgb(252,165,165));
                     }
                 }else{
-                    String q=quick==null?"":(" • QUICK WAIT "+quick.confirmations+"/6");
+                    String q=quick==null?"":(" • NO TRADE "+quick.confirmations+"/6");
                     liveText.setText("AI LIVE 1s • "+(buy?"BUY ":"SELL ")+pct+"% • M"+horizon+q+
                             (prefs.getBoolean("broker_board_learning",true)?" • BOARD "+learned:""));
                     liveText.setTextColor(buy?Color.rgb(134,239,172):Color.rgb(252,165,165));
+                    if(quick!=null && statusText!=null && quick.reason.startsWith("NO TRADE:")){
+                        statusText.setText(quick.reason);
+                        statusText.setTextColor(Color.rgb(251,191,36));
+                    }
                 }
             }
         });
@@ -600,15 +606,15 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(wm==null)wm=(WindowManager)getSystemService(WINDOW_SERVICE);
         if(statusBox!=null)return;
 
-        // Outer holder: round scan bubble on top, compact next-candle probability card below.
+        // Normal broker view stays clean: only the round AZ logo is visible.
         statusBox=new LinearLayout(this);
         statusBox.setOrientation(LinearLayout.VERTICAL);
         statusBox.setGravity(Gravity.CENTER_HORIZONTAL);
         statusBox.setPadding(dp(2),dp(2),dp(2),dp(2));
 
         final WindowManager.LayoutParams lp=new WindowManager.LayoutParams(
-                dp(190),
-                WindowManager.LayoutParams.WRAP_CONTENT,
+                dp(96),
+                dp(96),
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
@@ -623,96 +629,14 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         bubbleWrapLp.gravity=Gravity.CENTER_HORIZONTAL;
         statusBox.addView(bubbleWrap,bubbleWrapLp);
 
-        TextView scanBubble=new TextView(this);
-        scanBubble.setText("AZ\nSCAN");
-        scanBubble.setTextSize(13);
-        scanBubble.setTypeface(null,Typeface.BOLD);
-        scanBubble.setGravity(Gravity.CENTER);
-        scanBubble.setTextColor(Color.WHITE);
+        ImageView scanBubble=new ImageView(this);
+        scanBubble.setImageResource(R.mipmap.ic_launcher);
+        scanBubble.setScaleType(ImageView.ScaleType.FIT_CENTER);
         scanBubble.setContentDescription("Tap to scan candle. Drag to move.");
         scanBubble.setClickable(true);
-        GradientDrawable bubbleBg=new GradientDrawable();
-        bubbleBg.setShape(GradientDrawable.OVAL);
-        bubbleBg.setColor(Color.argb(248,7,20,32));
-        bubbleBg.setStroke(dp(3),Color.rgb(34,211,238));
-        scanBubble.setBackground(bubbleBg);
         FrameLayout.LayoutParams scanLp=new FrameLayout.LayoutParams(dp(84),dp(84));
         scanLp.gravity=Gravity.CENTER;
         bubbleWrap.addView(scanBubble,scanLp);
-
-        // One-tap close/stop button attached to the bubble.
-        TextView closeButton=new TextView(this);
-        closeButton.setText("×");
-        closeButton.setTextSize(16);
-        closeButton.setTypeface(null,Typeface.BOLD);
-        closeButton.setGravity(Gravity.CENTER);
-        closeButton.setTextColor(Color.WHITE);
-        closeButton.setContentDescription("Close scanner");
-        GradientDrawable closeBg=new GradientDrawable();
-        closeBg.setShape(GradientDrawable.OVAL);
-        closeBg.setColor(Color.rgb(30,41,59));
-        closeBg.setStroke(dp(1),Color.rgb(248,113,113));
-        closeButton.setBackground(closeBg);
-        FrameLayout.LayoutParams closeLp=new FrameLayout.LayoutParams(dp(26),dp(26));
-        closeLp.gravity=Gravity.TOP|Gravity.END;
-        closeLp.setMargins(0,0,0,0);
-        bubbleWrap.addView(closeButton,closeLp);
-        closeButton.setOnClickListener(v->{
-            setScannerEnabled(this,false);
-            Toast.makeText(this,"Scanner closed",Toast.LENGTH_SHORT).show();
-        });
-
-        // Compact card under the bubble. It stays visible and reports BUY/SELL percentages.
-        LinearLayout statusCard=new LinearLayout(this);
-        statusCard.setOrientation(LinearLayout.VERTICAL);
-        statusCard.setGravity(Gravity.CENTER_HORIZONTAL);
-        statusCard.setPadding(dp(10),dp(8),dp(10),dp(8));
-        GradientDrawable cardBg=new GradientDrawable();
-        cardBg.setColor(Color.argb(242,11,18,32));
-        cardBg.setCornerRadius(dp(16));
-        cardBg.setStroke(dp(2),Color.rgb(34,211,238));
-        statusCard.setBackground(cardBg);
-
-        statusText=new TextView(this);
-        statusText.setText(state);
-        statusText.setTextSize(13);
-        statusText.setTypeface(null,Typeface.BOLD);
-        statusText.setGravity(Gravity.CENTER);
-        statusText.setTextColor(Color.rgb(34,211,238));
-        statusCard.addView(statusText,new LinearLayout.LayoutParams(dp(166),dp(100)));
-
-        symbolText=new TextView(this);
-        symbolText.setTextSize(11);
-        symbolText.setGravity(Gravity.CENTER);
-        symbolText.setTextColor(Color.rgb(203,213,225));
-        statusCard.addView(symbolText,new LinearLayout.LayoutParams(dp(166),WindowManager.LayoutParams.WRAP_CONTENT));
-        updateSymbolText();
-
-        timingText=new TextView(this);
-        timingText.setTextSize(10);
-        timingText.setGravity(Gravity.CENTER);
-        timingText.setTextColor(Color.rgb(226,232,240));
-        statusCard.addView(timingText,new LinearLayout.LayoutParams(dp(166),WindowManager.LayoutParams.WRAP_CONTENT));
-
-        liveText=new TextView(this);
-        liveText.setText("AI LIVE • starting 1s refresh");
-        liveText.setTextSize(10);
-        liveText.setTypeface(null,Typeface.BOLD);
-        liveText.setGravity(Gravity.CENTER);
-        liveText.setTextColor(Color.rgb(125,211,252));
-        statusCard.addView(liveText,new LinearLayout.LayoutParams(dp(166),WindowManager.LayoutParams.WRAP_CONTENT));
-
-        int tfMinutes=selectedTimeframeMinutes();
-        long nowForClock=System.currentTimeMillis();
-        updateTimingText(nowForClock,tfMinutes>0?nextBoundary(nowForClock,tfMinutes):0L);
-
-        TextView hint=new TextView(this);
-        hint.setText("LIVE = 1s AI refresh • FINAL = after candle close");
-        hint.setTextSize(9);
-        hint.setGravity(Gravity.CENTER);
-        hint.setTextColor(Color.rgb(148,163,184));
-        statusCard.addView(hint,new LinearLayout.LayoutParams(dp(166),WindowManager.LayoutParams.WRAP_CONTENT));
-        statusBox.addView(statusCard,new LinearLayout.LayoutParams(dp(182),WindowManager.LayoutParams.WRAP_CONTENT));
 
         // Reliable tap-versus-drag handling. Small finger movement is still a TAP.
         final int touchSlop=ViewConfiguration.get(this).getScaledTouchSlop();
@@ -787,6 +711,59 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         return v.isEmpty()?"":"BUYER / SELLER "+v;
     }
 
+    private void showQuickSignalCard(QuickDecisionEngine.Result quick,int horizon){
+        if(quick==null || !quick.highChance || wm==null)return;
+        long slot=System.currentTimeMillis()/(Math.max(1,horizon)*60_000L);
+        String key=currentAsset()+"|M"+horizon+"|"+quick.label+"|"+slot;
+        if(key.equals(lastQuickPopupKey))return;
+        lastQuickPopupKey=key;
+
+        if(signalCard!=null){
+            try{wm.removeView(signalCard);}catch(Exception ignored){}
+            signalCard=null;
+        }
+        boolean buy="BUY".equals(quick.label);
+        int color=buy?Color.rgb(74,222,128):Color.rgb(248,113,113);
+        boolean mostSure=quick.score>=88 && quick.confirmations>=5 && quick.stableScans>=4;
+
+        LinearLayout card=new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16),dp(12),dp(16),dp(12));
+        GradientDrawable bg=new GradientDrawable();
+        bg.setColor(Color.argb(247,11,18,32));
+        bg.setCornerRadius(dp(18));
+        bg.setStroke(dp(3),color);
+        card.setBackground(bg);
+
+        TextView title=new TextView(this);
+        title.setText((mostSure?"MOST SURE • ":"HIGH CHANCE • ")+quick.label+" "+quick.score+"%");
+        title.setTextSize(20); title.setTypeface(null,Typeface.BOLD); title.setTextColor(color);
+        card.addView(title);
+
+        TextView details=new TextView(this);
+        details.setText(currentAsset()+" • M"+horizon+" • TRADE "+tradeDuration(horizon)+"\n"+
+                quick.reason+"\nWait for completed-candle confirmation");
+        details.setTextSize(13); details.setTextColor(Color.WHITE);
+        card.addView(details);
+
+        Button close=new Button(this);
+        close.setText("CLOSE"); close.setAllCaps(false);
+        card.addView(close,new LinearLayout.LayoutParams(-1,dp(46)));
+        close.setOnClickListener(v->{
+            try{wm.removeView(card);}catch(Exception ignored){}
+            if(signalCard==card)signalCard=null;
+            cancelSignalNotification();
+        });
+
+        WindowManager.LayoutParams cp=new WindowManager.LayoutParams(
+                dp(300),WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT);
+        cp.gravity=Gravity.CENTER_HORIZONTAL|Gravity.TOP; cp.y=dp(150);
+        try{wm.addView(card,cp);signalCard=card;}catch(Exception ignored){}
+    }
+
     private String shortSetup(SignalResult r){
         if(r==null)return "MULTI-FACTOR CONFLUENCE";
         String e=r.explanation==null?"":r.explanation;
@@ -833,7 +810,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         String recent=recentN<5?"WIN RATE: LEARNING":("RECENT WIN RATE "+learner.recentAccuracyPct(hi)+"% ("+recentN+")");
         TextView pair=new TextView(this);
         String pressure=pressureLine(r);
-        pair.setText(currentAsset()+" • M"+horizon+"\n"+r.label+" ENTRY "+signalTime+"\n"+entryState(System.currentTimeMillis(),predictionTargetStartMs)+"\nSETUP: "+shortSetup(r)+(pressure.isEmpty()?"":"\n"+pressure)+"\n"+recent);
+        pair.setText(currentAsset()+" • M"+horizon+" • TRADE "+tradeDuration(horizon)+"\n"+r.label+" ENTRY "+signalTime+"\n"+entryState(System.currentTimeMillis(),predictionTargetStartMs)+"\nSETUP: "+shortSetup(r)+(pressure.isEmpty()?"":"\n"+pressure)+"\n"+recent);
         pair.setTextSize(13);
         pair.setTextColor(Color.WHITE);
         card.addView(pair);
@@ -914,6 +891,11 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 .addAction(new Notification.Action.Builder(0,"OPEN",open).build())
                 .addAction(new Notification.Action.Builder(0,"CLOSE",close).build());
         getSystemService(NotificationManager.class).notify(SIGNAL_ID,n.build());
+    }
+
+    private String tradeDuration(int horizon){
+        int minutes=Math.max(1,Math.min(5,horizon));
+        return (minutes*60)+"s";
     }
 
     public static void dismissSignalOverlay(){

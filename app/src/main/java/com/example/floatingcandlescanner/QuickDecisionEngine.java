@@ -131,8 +131,17 @@ public final class QuickDecisionEngine {
         // Avoid calling a fast entry during visually extreme/spiky or dead states.
         boolean volatilityOk = s.volatilityRatio >= .48 && s.volatilityRatio <= 1.90;
         boolean dojiRisk = s.body < .13 && Math.max(s.upperWick, s.lowerWick) < .58;
+        boolean conflictRisk = Math.abs(s.trend) >= .16 && Math.abs(s.momentum) >= .16
+                && Math.signum(s.trend) != Math.signum(s.momentum);
+        boolean flatRisk = Math.abs(s.trend) < .09 && Math.abs(s.momentum) < .09
+                && Math.abs(s.sequenceBias) < .10;
+        boolean chaseRisk = (sign > 0 && s.pricePosition > .92)
+                || (sign < 0 && s.pricePosition < .08);
         if (!volatilityOk) context -= .14;
         if (dojiRisk) context -= .12;
+        if (conflictRisk) context -= .16;
+        if (flatRisk) context -= .14;
+        if (chaseRisk) context -= .12;
 
         context = clamp(context, .05, .95);
         emaLead = .62 * emaLead + .38 * lead;
@@ -154,14 +163,22 @@ public final class QuickDecisionEngine {
                 && confirmations >= 4
                 && stableScans >= 3
                 && volatilityOk
-                && !dojiRisk;
+                && !dojiRisk
+                && !conflictRisk
+                && !flatRisk
+                && !chaseRisk;
 
         // If the base engine is WAIT, require an even stronger live consensus.
         if ("WAIT".equals(base.label)) {
             highChance = highChance && confirmations >= 5 && score >= Math.max(threshold, 84);
         }
 
-        String reason = (why.length() == 0 ? "NO CONFIRMATION" : why.toString())
+        String safety = !volatilityOk ? "NO TRADE: VOLATILITY"
+                : dojiRisk ? "NO TRADE: WEAK/DOJI"
+                : conflictRisk ? "NO TRADE: TREND CONFLICT"
+                : flatRisk ? "NO TRADE: FLAT MARKET"
+                : chaseRisk ? "NO TRADE: LATE/EXTREME ENTRY" : "";
+        String reason = (!safety.isEmpty() ? safety : (why.length() == 0 ? "NO CONFIRMATION" : why.toString()))
                 + " • STABLE " + stableScans + "/3"
                 + " • " + confirmations + "/6";
         return new Result(highChance ? side : "WAIT", score, stableScans,
