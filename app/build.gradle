@@ -1,8 +1,16 @@
 plugins { id 'com.android.application' }
 android {
  namespace 'com.example.floatingcandlescanner'; compileSdk 35
- defaultConfig { applicationId 'com.example.floatingcandlescanner.az'; minSdk 26; targetSdk 35; versionCode 54; versionName '14.9' }
+ defaultConfig { applicationId 'com.example.floatingcandlescanner.az'; minSdk 26; targetSdk 35; versionCode 55; versionName '15.0' }
  buildFeatures { buildConfig true }
- buildTypes { release { minifyEnabled false; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),'proguard-rules.pro' } }
+ signingConfigs {
+  permanent {
+   storeFile file(System.getenv('AZ_KEYSTORE_PATH') ?: '../candlescanner-permanent.jks')
+   storePassword System.getenv('AZ_KEYSTORE_PASSWORD')
+   keyAlias System.getenv('AZ_KEY_ALIAS') ?: 'candlescanner'
+   keyPassword System.getenv('AZ_KEY_PASSWORD')
+  }
+ }
+ buildTypes { release { signingConfig signingConfigs.permanent; minifyEnabled false; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),'proguard-rules.pro' } }
  compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
