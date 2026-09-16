@@ -56,6 +56,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private LinearLayout statusBox;
     private TextView statusText, symbolText, timingText, liveText;
     private LinearLayout signalCard;
+    private boolean infoCardPinned=false;
     private OnlineLearner learner;
     private TrainingStore training;
     private BrokerBoardLearner boardLearner;
@@ -598,6 +599,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     }
 
     private void clearStrongSignalCard(){
+        if(infoCardPinned)return;
         if(signalCard!=null){
             try{wm.removeView(signalCard);}catch(Exception ignored){}
             signalCard=null;
@@ -705,6 +707,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
 
     private void showInfoCard(){
         if(wm==null)return;
+        infoCardPinned=true;
         if(signalCard!=null){
             try{wm.removeView(signalCard);}catch(Exception ignored){}
             signalCard=null;
@@ -737,6 +740,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         close.setText("CLOSE"); close.setAllCaps(false);
         card.addView(close,new LinearLayout.LayoutParams(-1,dp(46)));
         close.setOnClickListener(v->{
+            infoCardPinned=false;
             try{wm.removeView(card);}catch(Exception ignored){}
             if(signalCard==card)signalCard=null;
         });
@@ -762,6 +766,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     }
 
     private void showQuickSignalCard(QuickDecisionEngine.Result quick,int horizon){
+        if(infoCardPinned)return;
         if(quick==null || !quick.highChance || wm==null)return;
         long slot=System.currentTimeMillis()/(Math.max(1,horizon)*60_000L);
         String key=currentAsset()+"|M"+horizon+"|"+quick.label+"|"+slot;
@@ -831,6 +836,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     }
 
     private void showSignalCard(SignalResult r,int horizon,int c){
+        if(infoCardPinned)return;
         if(wm==null)return;
         if(signalCard!=null){
             try{wm.removeView(signalCard);}catch(Exception ignored){}
@@ -970,6 +976,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     public static void dismissSignalOverlay(){
         AutoSymbolAccessibilityService s=instance;
         if(s!=null)s.main.post(()->{
+            s.infoCardPinned=false;
             if(s.signalCard!=null){
                 try{s.wm.removeView(s.signalCard);}catch(Exception ignored){}
                 s.signalCard=null;
@@ -1097,7 +1104,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(signalCard!=null){try{wm.removeView(signalCard);}catch(Exception ignored){}}
             if(statusBox!=null){try{wm.removeView(statusBox);}catch(Exception ignored){}}
         }
-        signalCard=null; statusBox=null; statusText=null; symbolText=null; timingText=null; liveText=null;
+        signalCard=null; infoCardPinned=false; statusBox=null; statusText=null; symbolText=null; timingText=null; liveText=null;
     }
 
     private String collectVisibleText(AccessibilityNodeInfo root){
