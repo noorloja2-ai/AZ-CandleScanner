@@ -665,6 +665,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                     case MotionEvent.ACTION_UP:
                         v.setPressed(false);
                         if(!dragging){
+                            showInfoCard();
                             runManualScan();
                             v.performClick();
                         }
@@ -698,6 +699,53 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         int minutes=selectedTimeframeMinutes();
         predictionTargetStartMs=minutes>0?nextBoundary(System.currentTimeMillis(),minutes):0L;
         captureAndAnalyze();
+    }
+
+    private void showInfoCard(){
+        if(wm==null)return;
+        if(signalCard!=null){
+            try{wm.removeView(signalCard);}catch(Exception ignored){}
+            signalCard=null;
+        }
+
+        int horizon=Math.max(1,selectedTimeframeMinutes());
+        LinearLayout card=new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16),dp(12),dp(16),dp(12));
+        GradientDrawable bg=new GradientDrawable();
+        bg.setColor(Color.argb(247,11,18,32));
+        bg.setCornerRadius(dp(18));
+        bg.setStroke(dp(2),Color.rgb(34,211,238));
+        card.setBackground(bg);
+
+        TextView title=new TextView(this);
+        title.setText("AZ SCANNER INFORMATION");
+        title.setTextSize(19); title.setTypeface(null,Typeface.BOLD);
+        title.setTextColor(Color.rgb(34,211,238));
+        card.addView(title);
+
+        TextView details=new TextView(this);
+        details.setText("Chart: "+currentAsset()+"\nTimeframe: M"+horizon+
+                "\nRecommended trade: "+tradeDuration(horizon)+
+                "\nStatus: scanning now\nHIGH CHANCE / MOST SURE will appear automatically after safety checks.");
+        details.setTextSize(13); details.setTextColor(Color.WHITE);
+        card.addView(details);
+
+        Button close=new Button(this);
+        close.setText("CLOSE"); close.setAllCaps(false);
+        card.addView(close,new LinearLayout.LayoutParams(-1,dp(46)));
+        close.setOnClickListener(v->{
+            try{wm.removeView(card);}catch(Exception ignored){}
+            if(signalCard==card)signalCard=null;
+        });
+
+        WindowManager.LayoutParams cp=new WindowManager.LayoutParams(
+                dp(300),WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT);
+        cp.gravity=Gravity.CENTER_HORIZONTAL|Gravity.TOP; cp.y=dp(150);
+        try{wm.addView(card,cp);signalCard=card;}catch(Exception ignored){}
     }
 
     private String pressureLine(SignalResult r){

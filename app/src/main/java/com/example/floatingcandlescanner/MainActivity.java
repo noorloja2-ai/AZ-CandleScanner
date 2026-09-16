@@ -52,13 +52,13 @@ public class MainActivity extends Activity {
         brand.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(brand);
 
-        TextView title=tx("BUY / SELL Entry Signal v15.1 SAFER HIGH CHANCE AZ",22,Color.WHITE);
+        TextView title=tx("BUY / SELL Entry Signal v15.2 AZ TAP INFORMATION",22,Color.WHITE);
         title.setTypeface(null,1);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(title);
 
         TextView d=tx(
-                "v15.1 Safer Signal Edition: adds NO TRADE protection, clearer HIGH CHANCE reasons and the recommended trade duration for M1–M5. It keeps Quick Decision, broker-board learning, self-learning and the permanent GitHub update channel. Screenshots and broker credentials are never stored; no automatic trading.",
+                "v15.2 AZ Tap Information Edition: tap the floating AZ logo to scan immediately and open a closable information popup showing the chart, timeframe, duration and scanner status. HIGH CHANCE and MOST SURE signals still appear automatically. Screenshots and broker credentials are never stored; no automatic trading.",
                 14,Color.rgb(148,163,184));
         d.setPadding(0,dp(8),0,dp(16));
         root.addView(d);
