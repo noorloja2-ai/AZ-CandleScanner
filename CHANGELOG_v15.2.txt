@@ -1,0 +1,10 @@
+CandleScanner v15.2 — AZ Tap Information
+
+- Tap the floating AZ logo to start an immediate scan.
+- The tap opens an information popup showing chart, timeframe, recommended trade
+  duration and scanner status.
+- The information popup has a clear CLOSE button.
+- HIGH CHANCE and MOST SURE BUY/SELL signals continue to appear automatically.
+- Keeps v15.1 NO TRADE safety filters and permanent signed in-app updates.
+
+No signal is guaranteed and the app does not place trades automatically.
