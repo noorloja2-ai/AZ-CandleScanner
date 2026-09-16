@@ -1,6 +1,6 @@
 {
-  "version": "15.1",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v15.1/CandleScanner_v15.1.apk",
-  "apkName": "CandleScanner_v15.1.apk",
-  "notes": "Only the AZ logo stays over the broker. HIGH CHANCE and MOST SURE BUY/SELL cards appear automatically with trade duration and a close button."
+  "version": "15.2",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v15.2/CandleScanner_v15.2.apk",
+  "apkName": "CandleScanner_v15.2.apk",
+  "notes": "Tap the AZ logo to scan immediately and see a closable information popup with chart, timeframe, duration and scanner status."
 }
