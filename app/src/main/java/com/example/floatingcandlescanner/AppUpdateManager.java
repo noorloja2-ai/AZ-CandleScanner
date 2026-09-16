@@ -1,0 +1,273 @@
+package com.example.floatingcandlescanner;
+
+import android.app.*;
+import android.content.*;
+import android.database.Cursor;
+import android.net.Uri;
+import android.os.*;
+import android.provider.Settings;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
+/**
+ * Simple self-update helper for privately distributed APK builds.
+ * It checks the Google Drive manifest, downloads the APK with DownloadManager,
+ * and then opens Android's normal package installer. Android still requires the
+ * user to approve installation; silent self-installation is intentionally not used.
+ */
+public final class AppUpdateManager {
+    private static final String DRIVE_MANIFEST_URL =
+            "https://docs.google.com/document/d/1dxcuR_mai79CamYwzWfqH83JynhUVIcfXTXzYXTyZT8/export?format=txt";
+    private static final String APK_MIME = "application/vnd.android.package-archive";
+
+    private final Activity activity;
+    private final TextView status;
+    private long downloadId = -1L;
+    private boolean receiverRegistered = false;
+
+    private final BroadcastReceiver downloadReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (!DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) return;
+            long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
+            if (id != downloadId) return;
+            openDownloadedApk(id);
+        }
+    };
+
+    public AppUpdateManager(Activity activity, TextView status) {
+        this.activity = activity;
+        this.status = status;
+    }
+
+    public void checkForUpdate(boolean showNoUpdateMessage) {
+        setStatus("Checking Google Drive for app update…");
+        new Thread(() -> {
+            boolean ok = checkDriveManifest(showNoUpdateMessage);
+            if (!ok) {
+                activity.runOnUiThread(() -> {
+                    setStatus("Google Drive update source is unavailable. Check Drive sharing and try again.");
+                    if (showNoUpdateMessage) toast("Could not read the Google Drive update file.");
+                });
+            }
+        }, "app-update-check").start();
+    }
+
+    private boolean checkDriveManifest(boolean showNoUpdateMessage) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(DRIVE_MANIFEST_URL).openConnection();
+            c.setConnectTimeout(9000);
+            c.setReadTimeout(9000);
+            c.setInstanceFollowRedirects(true);
+            c.setRequestProperty("User-Agent", "Floating-Candle-Scanner-Android");
+            int code = c.getResponseCode();
+            if (code < 200 || code >= 300) return false;
+
+            String body = readBody(c);
+            String trimmed = body == null ? "" : body.trim();
+            if (!trimmed.startsWith("{")) return false;
+            JSONObject manifest = new JSONObject(trimmed);
+
+            String latestVersion = normalizeVersion(manifest.optString("version", ""));
+            String apkUrl = manifest.optString("apkUrl", "").trim();
+            String apkFileId = manifest.optString("apkFileId", "").trim();
+            String apkName = manifest.optString("apkName", "").trim();
+            String notes = manifest.optString("notes", "").trim();
+            if (apkUrl.isEmpty() && !apkFileId.isEmpty()) {
+                apkUrl = "https://drive.google.com/uc?export=download&id=" + apkFileId;
+            }
+
+            final String fVersion = latestVersion;
+            final String fUrl = apkUrl;
+            final String fName = apkName;
+            final String fNotes = notes;
+            activity.runOnUiThread(() -> handleRelease(fVersion, fUrl, fName, fNotes, showNoUpdateMessage));
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    private static String readBody(HttpURLConnection c) throws Exception {
+        StringBuilder body = new StringBuilder();
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream()))) {
+            String line;
+            while ((line = r.readLine()) != null) body.append(line).append('\n');
+        }
+        return body.toString();
+    }
+
+    private void handleRelease(String latestVersion, String apkUrl, String apkName,
+                               String notes, boolean showNoUpdateMessage) {
+        String current = BuildConfig.VERSION_NAME;
+        if (latestVersion.isEmpty()) {
+            setStatus("Update server did not provide a version number.");
+            return;
+        }
+        if (compareVersions(latestVersion, current) <= 0) {
+            setStatus("App is up to date — v" + current + ".");
+            if (showNoUpdateMessage) toast("You already have the latest version.");
+            return;
+        }
+        if (apkUrl.isEmpty()) {
+            setStatus("v" + latestVersion + " is available, but its APK is missing from the release.");
+            if (showNoUpdateMessage) toast("New version found, but no APK was attached.");
+            return;
+        }
+
+        String message = "Installed: v" + current + "\nAvailable: v" + latestVersion;
+        if (!notes.isEmpty()) {
+            String shortNotes = notes.length() > 500 ? notes.substring(0, 500) + "…" : notes;
+            message += "\n\n" + shortNotes;
+        }
+        final String finalMessage = message;
+        new AlertDialog.Builder(activity)
+                .setTitle("App update available")
+                .setMessage(finalMessage)
+                .setNegativeButton("Later", null)
+                .setPositiveButton("Download & Update", (d, which) ->
+                        prepareDownload(apkUrl, apkName, latestVersion))
+                .show();
+        setStatus("Update v" + latestVersion + " is available.");
+    }
+
+    private void prepareDownload(String url, String name, String version) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                !activity.getPackageManager().canRequestPackageInstalls()) {
+            new AlertDialog.Builder(activity)
+                    .setTitle("Allow app updates")
+                    .setMessage("Android must allow this app to install its downloaded update. Enable “Allow from this source”, return here, then tap CHECK / UPDATE APP again.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Open Settings", (d, w) -> {
+                        Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                Uri.parse("package:" + activity.getPackageName()));
+                        activity.startActivity(i);
+                    })
+                    .show();
+            return;
+        }
+        downloadApk(url, name, version);
+    }
+
+    private void downloadApk(String url, String name, String version) {
+        try {
+            String fileName = (name == null || name.trim().isEmpty())
+                    ? "CandleScanner_v" + version + ".apk"
+                    : name.trim();
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            request.setTitle("CandleScanner v" + version + " update");
+            request.setDescription("Downloading app update");
+            request.setMimeType(APK_MIME);
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setAllowedOverMetered(true);
+            request.setAllowedOverRoaming(false);
+            request.setDestinationInExternalFilesDir(activity, Environment.DIRECTORY_DOWNLOADS, fileName);
+
+            DownloadManager dm = (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
+            downloadId = dm.enqueue(request);
+            ensureReceiver();
+            setStatus("Downloading CandleScanner v" + version + "…");
+            toast("Update download started.");
+        } catch (Exception e) {
+            setStatus("Could not start update download: " + safeMessage(e));
+        }
+    }
+
+    private void ensureReceiver() {
+        if (receiverRegistered) return;
+        IntentFilter f = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        if (Build.VERSION.SDK_INT >= 33)
+            activity.registerReceiver(downloadReceiver, f, Context.RECEIVER_NOT_EXPORTED);
+        else
+            activity.registerReceiver(downloadReceiver, f);
+        receiverRegistered = true;
+    }
+
+    private void openDownloadedApk(long id) {
+        DownloadManager dm = (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
+        DownloadManager.Query q = new DownloadManager.Query().setFilterById(id);
+        try (Cursor cursor = dm.query(q)) {
+            if (cursor == null || !cursor.moveToFirst()) {
+                setStatus("Update downloaded, but the file could not be opened.");
+                return;
+            }
+            int statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS);
+            int state = statusIndex >= 0 ? cursor.getInt(statusIndex) : DownloadManager.STATUS_FAILED;
+            if (state != DownloadManager.STATUS_SUCCESSFUL) {
+                setStatus("Update download failed. Tap CHECK / UPDATE APP to retry.");
+                return;
+            }
+        }
+        Uri uri = dm.getUriForDownloadedFile(id);
+        if (uri == null) {
+            setStatus("Update downloaded, but Android did not return the APK file URI.");
+            return;
+        }
+        try {
+            Intent install = new Intent(Intent.ACTION_VIEW);
+            install.setDataAndType(uri, APK_MIME);
+            install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            activity.startActivity(install);
+            setStatus("Update downloaded — approve the Android installation screen.");
+        } catch (Exception e) {
+            setStatus("Update downloaded, but installer could not open: " + safeMessage(e));
+        }
+    }
+
+    public void destroy() {
+        if (receiverRegistered) {
+            try { activity.unregisterReceiver(downloadReceiver); } catch (Exception ignored) {}
+            receiverRegistered = false;
+        }
+    }
+
+    private void setStatus(String s) {
+        if (status != null) status.setText(s);
+    }
+
+    private void toast(String s) {
+        Toast.makeText(activity, s, Toast.LENGTH_LONG).show();
+    }
+
+    private static String normalizeVersion(String s) {
+        if (s == null) return "";
+        s = s.trim();
+        while (s.startsWith("v") || s.startsWith("V")) s = s.substring(1);
+        int dash = s.indexOf('-');
+        if (dash > 0) s = s.substring(0, dash);
+        return s.trim();
+    }
+
+    static int compareVersions(String a, String b) {
+        String[] pa = normalizeVersion(a).split("\\.");
+        String[] pb = normalizeVersion(b).split("\\.");
+        int n = Math.max(pa.length, pb.length);
+        for (int i = 0; i < n; i++) {
+            int ai = i < pa.length ? numberPart(pa[i]) : 0;
+            int bi = i < pb.length ? numberPart(pb[i]) : 0;
+            if (ai != bi) return Integer.compare(ai, bi);
+        }
+        return 0;
+    }
+
+    private static int numberPart(String s) {
+        try {
+            String digits = s.replaceAll("[^0-9].*$", "");
+            return digits.isEmpty() ? 0 : Integer.parseInt(digits);
+        } catch (Exception e) { return 0; }
+    }
+
+    private static String safeMessage(Exception e) {
+        String m = e.getMessage();
+        return (m == null || m.trim().isEmpty()) ? e.getClass().getSimpleName() : m;
+    }
+}

@@ -1,0 +1,11 @@
+CandleScanner v14.2 — FULL KNOWLEDGE + CANDLESTICK BIBLE
+
+- Preserves v14 uploaded-knowledge, liquidity/FVG and structure-confirmation engines.
+- Restores and integrates the v13 CandlestickBibleEngine as a conservative confirmation layer.
+- Keeps OnlineLearner preference key online_learner_v4.
+- Keeps TrainingStore preference key training_store_v3.
+- Keeps the existing Android package com.example.floatingcandlescanner.
+- Candlestick Bible evidence uses capped weighting plus uncertainty/risk penalties; it does not guarantee a trade or a win rate.
+- No automatic trade execution was added.
+- No manual I WON / I LOST controls were added.
+- Version code: 45; version name: 14.2.

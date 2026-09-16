@@ -1,0 +1,12 @@
+CandleScanner v14.3 COMMUNITY LEARNING
+
+- Preserves every v14.2 knowledge engine, PDF/book-derived rule and local learner.
+- Adds CommunityLearningSync.
+- Each exact-boundary resolved result can queue an anonymous community row.
+- No screenshots, credentials, device IDs or GitHub token are uploaded.
+- GitHub public config: community-learning.json.
+- GitHub public aggregate model: community-model.json.
+- Community model is blended conservatively, maximum 25% influence.
+- Local learning remains dominant and continues even if community sync is unavailable.
+- Adds Community Learning toggle + SYNC COMMUNITY LEARNING NOW button.
+- Version code 46 / version name 14.3.

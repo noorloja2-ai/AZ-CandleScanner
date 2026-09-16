@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "generated_at": "2026-09-15T00:00:00Z",
+  "assets": {
+    "GLOBAL": {
+      "M1": {"samples": 250, "bias": 0.04, "scale": 1.02},
+      "M2": {"samples": 180, "bias": -0.02, "scale": 0.98}
+    },
+    "EUR_USD": {
+      "M1": {"samples": 320, "bias": 0.06, "scale": 1.05}
+    }
+  }
+}

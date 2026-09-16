@@ -1,0 +1,13 @@
+CandleScanner v14.7 — Broker Board Learning
+
+- Keeps all v14.6 History Entry Learning features.
+- Adds BrokerBoardLearner for broker-chart observational learning.
+- Live scans may improve state stability, but only exact completed future candles become training labels.
+- Stores only compact numeric candle-state buckets: trend, momentum, candle geometry, range position and volatility.
+- Never stores broker screenshots, full page text, usernames or passwords.
+- Matching historical board states are blended conservatively into later BUY/SELL probabilities.
+- Beta smoothing and sample-count gates prevent a few examples from dominating predictions.
+- WAIT is only promoted from board memory after at least 20 matching resolved examples with a decisive historical edge.
+- Broker-board learning can be turned on/off from the main screen and is enabled by default.
+- Existing local calibration, setup learning, community/shared learning, history engine and high-accuracy filters remain active.
+- No automatic broker orders and no guaranteed win-rate claim.

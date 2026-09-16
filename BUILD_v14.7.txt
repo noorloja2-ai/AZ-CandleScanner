@@ -1,0 +1,10 @@
+CandleScanner v14.7 source package
+Package: com.example.floatingcandlescanner.az
+versionCode: 52
+versionName: 14.7
+compileSdk: 35
+targetSdk: 35
+minSdk: 26
+Java: 17
+
+This package contains source changes only. Build with the existing Android/Gradle workflow.

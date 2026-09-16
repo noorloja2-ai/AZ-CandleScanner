@@ -1,0 +1,16 @@
+CandleScanner v13.1 — EMA/RSI + Fibonacci confluence
+
+Added on top of v13.0 combined knowledge:
+- EMA 9 / EMA 21 crossover confluence using exact live OHLC
+- RSI-14 > 50 / < 50 confirmation for EMA 9/21 setups
+- Price-above/below-both-EMA confirmation candle rule
+- EMA-50 / EMA-200 long-term context when enough data is available
+- Fibonacci 0.50 / 0.618 / 0.786 pullback reaction + EMA-9 confluence
+- Live OHLC history increased to 240 candles so EMA-200 can be calculated
+- Existing automatic learner storage remains unchanged (online_learner_v4)
+- No I WON / I LOST feedback learning
+
+Important:
+- EMA/RSI/Fibonacci are used as confluence, not as guaranteed standalone signals.
+- Volume confirmation from the reference image was NOT added because the current market-data Candle model does not provide reliable volume for every supported forex feed.
+- Pocket Option OTC remains visual-only; standard-market EMA/RSI data is not substituted for broker OTC candles.

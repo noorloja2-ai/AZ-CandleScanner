@@ -1,0 +1,7 @@
+CandleScanner v14.9
+versionName: 14.9
+versionCode: 54
+compileSdk: 35
+targetSdk: 35
+minSdk: 26
+Feature: QUICK DECISION + LIVE BOARD MEMORY

@@ -1,0 +1,10 @@
+CandleScanner v12.9 LIQUIDITY + FVG AZ
+
+- No I WON / I LOST buttons or manual-feedback learning.
+- Added LiquidityFvgEngine.
+- Detects visual bullish/bearish FVGs, double FVG, FVG after BOS, and FVG retest/hold.
+- Detects liquidity sweeps above highs / below lows and equal-high/equal-low pools.
+- Adds liquidity + FVG confluence to TradingBrain scoring and High Accuracy consensus.
+- Added conservative Bullish/Bearish Abandoned-Baby-like visual pattern rules.
+- Keeps existing candlestick, price-action, structure, support/resistance, AZ branding, updater and alert features.
+- No automatic trade execution.

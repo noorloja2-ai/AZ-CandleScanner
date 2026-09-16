@@ -1,0 +1,6 @@
+CandleScanner v14.4.2
+- App updater uses Google Drive only.
+- Removed GitHub fallback from AppUpdateManager.
+- Corrected update-screen wording that still mentioned GitHub Releases.
+- Preserved all PDF/book knowledge, local self-learning, community-learning logic, alerts and scanner features.
+- Package remains com.example.floatingcandlescanner.az for in-place update from v14.4.1.

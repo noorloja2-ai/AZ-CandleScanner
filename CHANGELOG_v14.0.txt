@@ -1,0 +1,16 @@
+CandleScanner v14.0 — ALL UPLOADED KNOWLEDGE
+
+- Keeps package id com.example.floatingcandlescanner.
+- Keeps automatic learner storage online_learner_v4 and existing training_store_v3 compatibility.
+- No I WON / I LOST buttons and no manual-feedback calibration.
+- Keeps all v13.1 knowledge: completed-candle logic, named candlestick patterns, trend/structure, support/resistance, breakout/retest, BOS/CHoCH-style proxies, liquidity sweeps, FVG, EMA 9/21/50/200, RSI-14 and Fibonacci confluence.
+- Adds remaining chart-pattern knowledge from the uploaded technical-analysis material:
+  * Head & Shoulders top with neckline-break confirmation.
+  * Inverse Head & Shoulders with neckline-break confirmation.
+  * Cup & Handle rounded-bottom + handle + lip-breakout proxy.
+  * Pipe/Two-Bar reversal with breakout confirmation.
+  * NR4 and inside-NR4 breakout logic.
+  * Conservative gap-pivot continuation proxy.
+- Existing double/triple top/bottom, rectangle, triangles, wedges and flag/pennant logic remains active.
+- Uploaded-knowledge patterns are confirmation-first and carry uncertainty penalties because screenshot-derived candle geometry is approximate.
+- No automatic broker orders.

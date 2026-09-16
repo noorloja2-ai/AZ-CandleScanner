@@ -1,0 +1,14 @@
+CandleScanner v13.0 Combined Knowledge Edition
+
+- Keeps all v12.9 knowledge and the existing automatic OnlineLearner storage key (online_learner_v4).
+- Keeps package id unchanged so an in-place app update can preserve learned samples.
+- No I WON / I LOST manual feedback.
+- Adds StructureConfirmationEngine:
+  * BOS / market-structure break proxy
+  * failed new high / failed new low (CHoCH-style reversal proxy)
+  * breakout + retest with wick/body confirmation
+  * hammer/shooting-star confirmation candle
+  * double bottom/top + BOS + retest
+  * rising/falling wedge break
+  * liquidity sweep + structure confirmation
+- New structures are confluence inputs, not guaranteed signals.

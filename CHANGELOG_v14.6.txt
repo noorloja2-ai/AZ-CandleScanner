@@ -1,0 +1,9 @@
+CandleScanner v14.6 — History Entry Learning
+
+- Keeps all v14.5 Auto Shared Learning features.
+- Adds HistoricalEntryEngine using up to 20 recent completed visual candles.
+- Adds named BUY/SELL setup families: bullish/bearish engulfing, hammer, shooting star, morning/evening star, momentum continuation and breakout/breakdown retest.
+- High Accuracy mode now requires a 3-factor history gate: candle/setup + level/context + trend/momentum confirmation (or a strong validated history setup).
+- Strong history setup names flow into the existing TrainingStore/OnlineLearner so the app learns which setup families actually resolve correctly per asset/timeframe.
+- Adds extra WAIT filtering for weak/indecisive entries and opposing support/resistance extremes.
+- No guaranteed win-rate claim; percentages remain model confidence scores.

@@ -1,0 +1,1105 @@
+package com.example.floatingcandlescanner;
+
+import android.accessibilityservice.AccessibilityService;
+import android.app.*;
+import android.content.*;
+import android.graphics.*;
+import android.graphics.drawable.GradientDrawable;
+import android.hardware.HardwareBuffer;
+import android.media.AudioAttributes;
+import android.media.RingtoneManager;
+import android.net.Uri;
+import android.os.*;
+import android.provider.Settings;
+import android.view.*;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.widget.*;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.ArrayDeque;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.Executor;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Screen-share-free broker chart scanner.
+ *
+ * Android 11+ Accessibility screenshots are analyzed in memory. A small
+ * TYPE_ACCESSIBILITY_OVERLAY status box stays above the broker and shows
+ * next-candle BUY/SELL probability percentages. The service never stores screenshots or credentials.
+ */
+public class AutoSymbolAccessibilityService extends AccessibilityService {
+    private static final String CCY = "EUR|GBP|USD|JPY|CHF|AUD|NZD|CAD|SGD|HKD|CNH|CNY|INR|BRL|MXN|ZAR|TRY|SEK|NOK|DKK|PLN|HUF|CZK|AED|SAR";
+    private static final String ASSET = CCY + "|XAU|XAG|BTC|ETH|SOL|BNB";
+    private static final Pattern PAIR = Pattern.compile("(?i)(?<![A-Z0-9])(" + ASSET + ")\\s*[/\\-_:]?\\s*(" + ASSET + "|USDT)(?![A-Z0-9])");
+    private static final Pattern TF_M = Pattern.compile("(?i)(?<![A-Z0-9])M\\s*([1-5])(?!\\d)");
+    private static final Pattern TF_MIN = Pattern.compile("(?i)(?<!\\d)([1-5])\\s*(?:M|MIN|MINS|MINUTE|MINUTES)(?![A-Z])");
+
+    private static final String PREFS="scanner";
+    private static final String SIGNAL_CH="trade_signal_sound_v122";
+    private static final int SIGNAL_ID=5501;
+    private static final long POST_CLOSE_SCAN_DELAY_MS=650L;
+    private static final long ENTRY_WINDOW_MS=5_000L;
+    private static final long AUTO_RETRY_MS=1_500L;
+    private static final long LIVE_REFRESH_MS=1_000L;
+    private static final long LIVE_CAPTURE_MIN_GAP_MS=900L;
+    private static final long LIVE_BOUNDARY_GUARD_MS=1_500L;
+    private static volatile AutoSymbolAccessibilityService instance;
+
+    private final Handler main=new Handler(Looper.getMainLooper());
+    private boolean scanBusy=false;
+    private WindowManager wm;
+    private LinearLayout statusBox;
+    private TextView statusText, symbolText, timingText, liveText;
+    private LinearLayout signalCard;
+    private OnlineLearner learner;
+    private TrainingStore training;
+    private BrokerBoardLearner boardLearner;
+    private SelfDecisionEngine selfDecision;
+    private QuickDecisionEngine quickDecision;
+    private SharedPreferences prefs;
+    private CandleVision.Analysis lastAnalysis;
+    private long lastAlertAt=0L;
+    private String lastAlertKey="";
+    private String lastActivePackage="";
+    private long lastAutoBoundaryMs=Long.MIN_VALUE;
+    private int scheduledTimeframeMinutes=-1;
+    private long predictionTargetStartMs=0L;
+    private long preparedBoundaryMs=Long.MIN_VALUE;
+    private long pendingBoundaryMs=Long.MIN_VALUE;
+    private long lastCaptureAttemptAt=0L;
+    private long lastLiveRefreshAt=0L;
+    private long lastSuccessfulAutoScanAt=0L;
+    private int lastScreenshotError=0;
+    private String lastDirection="";
+    private int lastDirectionPercent=0;
+    private int lastSignalHorizon=0;
+    private int lastWinRate=-1;
+    private int lastWinRateSamples=0;
+
+    private final Runnable scanTick=new Runnable(){
+        @Override public void run(){
+            if(scannerEnabled()) candleCadenceTick();
+            main.postDelayed(this,1000L);
+        }
+    };
+
+    // Learning is intentionally NOT timer-driven. Labels are created/resolved
+    // only from official post-close scans at exact candle boundaries.
+    private final Runnable learnTick=new Runnable(){
+        @Override public void run(){ /* boundary-driven learning only */ }
+    };
+
+    @Override protected void onServiceConnected(){
+        super.onServiceConnected();
+        instance=this;
+        prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
+        learner=new OnlineLearner(this);
+        training=new TrainingStore(this);
+        boardLearner=new BrokerBoardLearner(this);
+        selfDecision=new SelfDecisionEngine();
+        quickDecision=new QuickDecisionEngine();
+        learner.setAsset(currentAsset());
+        CommunityLearningSync.refreshAndFlushAsync(this);
+        wm=(WindowManager)getSystemService(WINDOW_SERVICE);
+        createNotificationChannel();
+        if(scannerEnabled()) showStatusOverlay("READY");
+        resetCadenceSchedule();
+        main.removeCallbacks(scanTick);
+        main.removeCallbacks(learnTick);
+        // Pending records from older/timer-based versions are unsafe to resolve.
+        training.clearPending();
+        main.post(scanTick);
+    }
+
+    @Override public boolean onUnbind(Intent intent){
+        instance=null;
+        main.removeCallbacks(scanTick);
+        main.removeCallbacks(learnTick);
+        removeOverlays();
+        return super.onUnbind(intent);
+    }
+
+    @Override public void onDestroy(){
+        instance=null;
+        main.removeCallbacks(scanTick);
+        main.removeCallbacks(learnTick);
+        removeOverlays();
+        super.onDestroy();
+    }
+
+    @Override public void onAccessibilityEvent(AccessibilityEvent event){
+        try{
+            if(event!=null && event.getPackageName()!=null)
+                lastActivePackage=event.getPackageName().toString();
+
+            AccessibilityNodeInfo root=getRootInActiveWindow();
+            if(root==null)return;
+            String visible=collectVisibleText(root);
+            root.recycle();
+            String symbol=detectSymbol(visible);
+            String timeframe=detectTimeframe(visible);
+            long now=System.currentTimeMillis();
+
+            SharedPreferences.Editor edit=prefs.edit()
+                    .putString("detected_package",lastActivePackage);
+            if(symbol!=null&&!symbol.isEmpty()){
+                String previous=prefs.getString("detected_asset","");
+                if(!symbol.equals(previous)){
+                    training.clearPending();
+                    if(boardLearner!=null)boardLearner.clearPending();
+                    learner.setAsset(symbol);
+                    if(selfDecision!=null)selfDecision.reset();
+                    if(quickDecision!=null)quickDecision.reset();
+                    lastAlertKey="";
+                }
+                edit.putString("detected_asset",symbol)
+                        .putLong("detected_asset_time",now);
+            }
+            if(timeframe!=null&&!timeframe.isEmpty())
+                edit.putString("detected_timeframe",timeframe)
+                        .putString("last_valid_timeframe",timeframe)
+                        .putLong("detected_timeframe_time",now);
+            edit.apply();
+            updateSymbolText();
+        }catch(Exception ignored){}
+    }
+
+    @Override public void onInterrupt(){}
+
+    public static boolean isConnected(){ return instance!=null; }
+
+    public static void setScannerEnabled(Context c,boolean enabled){
+        c.getSharedPreferences(PREFS,MODE_PRIVATE).edit().putBoolean("scanner_enabled",enabled).apply();
+        AutoSymbolAccessibilityService s=instance;
+        if(s!=null){
+            if(enabled){
+                s.resetCadenceSchedule();
+                s.showStatusOverlay("READY");
+                s.main.removeCallbacks(s.scanTick);
+                s.main.post(s.scanTick);
+            }else{
+                s.resetCadenceSchedule();
+                if(s.training!=null)s.training.clearPending();
+                if(s.boardLearner!=null)s.boardLearner.clearPending();
+                s.removeOverlays();
+                s.main.removeCallbacks(s.scanTick);
+                s.cancelSignalNotification();
+            }
+        }
+    }
+
+    private boolean scannerEnabled(){
+        if(prefs==null)prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
+        return prefs.getBoolean("scanner_enabled",false);
+    }
+
+    private void resetCadenceSchedule(){
+        scheduledTimeframeMinutes=-1;
+        lastAutoBoundaryMs=Long.MIN_VALUE;
+        predictionTargetStartMs=0L;
+        preparedBoundaryMs=Long.MIN_VALUE;
+        pendingBoundaryMs=Long.MIN_VALUE;
+        lastCaptureAttemptAt=0L;
+        lastLiveRefreshAt=0L;
+        if(selfDecision!=null)selfDecision.reset();
+        lastSuccessfulAutoScanAt=0L;
+        lastScreenshotError=0;
+        lastDirection="";
+        lastDirectionPercent=0;
+        lastSignalHorizon=0;
+        lastWinRate=-1;
+        lastWinRateSamples=0;
+    }
+
+    /**
+     * Completed-candle next-entry mode. The scanner waits until the broker-aligned
+     * candle has actually closed, pauses briefly so the chart can render that close,
+     * and only then captures/analyzes the chart for the newly opened candle.
+     *
+     * This is intentionally different from pre-entry prediction: the just-finished
+     * candle is never guessed before it closes. A small post-close processing delay
+     * is unavoidable because the completed candle must exist before it can be read.
+     */
+    private void candleCadenceTick(){
+        int minutes=selectedTimeframeMinutes();
+        long now=System.currentTimeMillis();
+        if(minutes<=0){
+            scheduledTimeframeMinutes=-1;
+            lastAutoBoundaryMs=Long.MIN_VALUE;
+            preparedBoundaryMs=Long.MIN_VALUE;
+            updateTimingText(now,0L);
+            maybeLiveRefresh(now,0L,0L);
+            return;
+        }
+
+        long interval=minutes*60_000L;
+        long currentBoundary=(now/interval)*interval;
+        long nextBoundary=currentBoundary+interval;
+
+        if(scheduledTimeframeMinutes!=minutes){
+            if(scheduledTimeframeMinutes!=-1 && training!=null)training.clearPending();
+            scheduledTimeframeMinutes=minutes;
+            // Do not lock an official signal from a random partially-completed
+            // candle on startup. Live AI refresh can run, but the first official
+            // next-candle decision waits for the next real close.
+            lastAutoBoundaryMs=currentBoundary;
+            preparedBoundaryMs=Long.MIN_VALUE;
+            pendingBoundaryMs=Long.MIN_VALUE;
+        }
+
+        if(currentBoundary>lastAutoBoundaryMs && preparedBoundaryMs!=currentBoundary){
+            long sinceClose=now-currentBoundary;
+            if(sinceClose>=POST_CLOSE_SCAN_DELAY_MS && !scanBusy &&
+                    now-lastCaptureAttemptAt>=LIVE_CAPTURE_MIN_GAP_MS){
+                predictionTargetStartMs=currentBoundary;
+                pendingBoundaryMs=currentBoundary;
+                captureAndAnalyze(true,currentBoundary,false);
+            }
+        }
+
+        // Mark the boundary consumed only after a valid screenshot was analyzed.
+        // Failed screenshots remain eligible for retry on the following tick.
+        if(preparedBoundaryMs==currentBoundary) lastAutoBoundaryMs=currentBoundary;
+
+        // Every-second visual refresh. Suppress it just before/after a candle
+        // boundary so Android's screenshot rate limit cannot steal the official
+        // completed-candle capture.
+        maybeLiveRefresh(now,currentBoundary,nextBoundary);
+        updateTimingText(now,nextBoundary);
+    }
+
+    private void maybeLiveRefresh(long now,long currentBoundary,long nextBoundary){
+        if(scanBusy || !scannerEnabled())return;
+        if(now-lastLiveRefreshAt<LIVE_REFRESH_MS)return;
+        if(now-lastCaptureAttemptAt<LIVE_CAPTURE_MIN_GAP_MS)return;
+
+        if(nextBoundary>0L){
+            long until=nextBoundary-now;
+            long since=now-currentBoundary;
+            if(until>=0L && until<=LIVE_BOUNDARY_GUARD_MS)return;
+            if(since>=0L && since<=POST_CLOSE_SCAN_DELAY_MS+750L)return;
+        }
+
+        lastLiveRefreshAt=now;
+        captureAndAnalyze(false,0L,true);
+    }
+
+    private int selectedTimeframeMinutes(){
+        String tf=currentTimeframeLabel();
+        if(tf.matches("M[1-5]")) return tf.charAt(1)-'0';
+        return -1;
+    }
+
+    private long nextBoundary(long now,int minutes){
+        if(minutes<=0)return 0L;
+        long interval=minutes*60_000L;
+        return ((now/interval)+1L)*interval;
+    }
+
+    private String clock(long when){
+        if(when<=0L)return "--:--:--";
+        return new SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(new Date(when));
+    }
+
+    private String countdown(long millis){
+        long sec=Math.max(0L,(millis+999L)/1000L);
+        long h=sec/3600L; sec%=3600L;
+        long m=sec/60L, s=sec%60L;
+        return h>0?String.format(Locale.getDefault(),"%d:%02d:%02d",h,m,s)
+                :String.format(Locale.getDefault(),"%02d:%02d",m,s);
+    }
+
+    private String entryState(long now,long target){
+        if(target<=0L)return "ENTRY TIME UNKNOWN";
+        if(now<target)return "ENTRY IN "+countdown(target-now);
+        long late=now-target;
+        if(late<=ENTRY_WINDOW_MS)return "ENTRY NOW • 00:00";
+        return "LATE";
+    }
+
+    private String winRateText(){
+        if(lastWinRateSamples<5 || lastWinRate<0)
+            return "WIN RATE: LEARNING"+(lastWinRateSamples>0?" ("+lastWinRateSamples+")":"");
+        return "RECENT WIN RATE "+lastWinRate+"% ("+lastWinRateSamples+")";
+    }
+
+    private void refreshSignalDisplay(long now){
+        if(statusText==null || lastDirection.isEmpty())return;
+        String entry=lastDirection+" ENTRY "+clock(predictionTargetStartMs);
+        statusText.setText(lastDirection+" "+lastDirectionPercent+"%\n"+entry+"\n"+entryState(now,predictionTargetStartMs)+"\n"+winRateText());
+        statusText.setTextColor("BUY".equals(lastDirection)?Color.rgb(134,239,172):Color.rgb(252,165,165));
+    }
+
+    private void updateTimingText(long now,long nextBoundary){
+        main.post(()->{
+            refreshSignalDisplay(now);
+            if(timingText==null)return;
+            if(nextBoundary<=0L){
+                timingText.setText("Candle time unavailable");
+            }else if(predictionTargetStartMs>0L && now<=predictionTargetStartMs+ENTRY_WINDOW_MS){
+                timingText.setText("M"+Math.max(1,lastSignalHorizon)+" • target candle "+clock(predictionTargetStartMs));
+            }else{
+                timingText.setText("Next entry candle "+clock(nextBoundary)+" • "+countdown(nextBoundary-now));
+            }
+        });
+    }
+
+    private void captureAndAnalyze(){
+        captureAndAnalyze(false,predictionTargetStartMs,false);
+    }
+
+    private void captureAndAnalyze(boolean automatic,long targetBoundary,boolean liveRefresh){
+        if(Build.VERSION.SDK_INT<30||scanBusy||!scannerEnabled())return;
+        scanBusy=true;
+        lastCaptureAttemptAt=System.currentTimeMillis();
+        Executor ex=getMainExecutor();
+        TakeScreenshotCallback cb=new TakeScreenshotCallback(){
+            @Override public void onSuccess(ScreenshotResult screenshot){
+                Bitmap software=null;
+                HardwareBuffer hb=null;
+                boolean valid=false;
+                try{
+                    hb=screenshot.getHardwareBuffer();
+                    Bitmap hw=Bitmap.wrapHardwareBuffer(hb,screenshot.getColorSpace());
+                    if(hw!=null)software=hw.copy(Bitmap.Config.ARGB_8888,false);
+                    if(software!=null) valid=analyzeBitmap(software,liveRefresh,automatic,targetBoundary);
+                    else showUnavailable("NO FRAME • AUTO RETRY");
+                }catch(Exception e){
+                    showUnavailable("SCAN RETRY");
+                }finally{
+                    if(software!=null&&!software.isRecycled())software.recycle();
+                    if(hb!=null)hb.close();
+                    scanBusy=false;
+                    if(automatic && valid){
+                        preparedBoundaryMs=targetBoundary;
+                        lastAutoBoundaryMs=targetBoundary;
+                        pendingBoundaryMs=Long.MIN_VALUE;
+                        lastSuccessfulAutoScanAt=System.currentTimeMillis();
+                        lastScreenshotError=0;
+                    }else if(automatic){
+                        pendingBoundaryMs=Long.MIN_VALUE;
+                    }
+                }
+            }
+            @Override public void onFailure(int errorCode){
+                scanBusy=false;
+                lastScreenshotError=errorCode;
+                if(automatic)pendingBoundaryMs=Long.MIN_VALUE;
+                if(errorCode==ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT){
+                    // The 1-second heartbeat retries automatically.
+                    return;
+                }
+                if(liveRefresh)return;
+                if(Build.VERSION.SDK_INT>=34 && errorCode==ERROR_TAKE_SCREENSHOT_SECURE_WINDOW)
+                    showUnavailable("BROKER BLOCKS SCREEN CAPTURE");
+                else if(errorCode==ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS)
+                    showUnavailable("ACCESSIBILITY OFF");
+                else showUnavailable("AUTO SCAN RETRY");
+            }
+        };
+
+        // Android 14+ can capture just the active broker window. This avoids our
+        // accessibility overlay being included in the candle image. Fall back to
+        // the full display on Android 11-13 or when no active window is available.
+        if(Build.VERSION.SDK_INT>=34){
+            AccessibilityNodeInfo root=null;
+            try{
+                root=getRootInActiveWindow();
+                if(root!=null){
+                    int windowId=root.getWindowId();
+                    root.recycle();
+                    root=null;
+                    takeScreenshotOfWindow(windowId,ex,cb);
+                    return;
+                }
+            }catch(Exception ignored){
+            }finally{
+                if(root!=null)try{root.recycle();}catch(Exception ignored){}
+            }
+        }
+        takeScreenshot(Display.DEFAULT_DISPLAY,ex,cb);
+    }
+
+    private boolean analyzeBitmap(Bitmap b,boolean liveRefresh,boolean automatic,long targetBoundary){
+        String asset=currentAsset();
+        learner.setAsset(asset);
+        CandleVision.Analysis a=CandleVision.analyze(
+                b,
+                prefs.getInt("left",5),prefs.getInt("top",18),
+                prefs.getInt("right",96),prefs.getInt("bottom",80),
+                prefs.getInt("theme",0),prefs.getInt("sensitivity",1),
+                learner,prefs.getBoolean("high_accuracy",true));
+        lastAnalysis=a;
+        if(a==null||!a.valid||a.detectedBins<8){
+            if(liveRefresh)showLiveStatus("AI LIVE • FINDING CANDLES");
+            else showUnavailable("FINDING CANDLES");
+            return false;
+        }
+        if(selfDecision!=null)selfDecision.observe(a.horizons);
+
+        int selectedH=selectedHorizonIndex();
+        if(selectedH<0){
+            if(liveRefresh)showLiveStatus("AI LIVE • TIMEFRAME UNKNOWN");
+            else showUnavailable("TIMEFRAME UNKNOWN");
+            return false;
+        }
+        if(selectedH>=a.horizons.length){
+            if(liveRefresh)showLiveStatus("AI LIVE • TIMEFRAME UNKNOWN");
+            else showUnavailable("TIMEFRAME UNKNOWN");
+            return false;
+        }
+
+        SignalResult best=a.horizons[selectedH];
+        int horizon=selectedH+1;
+        if(best==null){
+            if(liveRefresh)showLiveStatus("AI LIVE • NO DATA");
+            else showUnavailable("NO PROBABILITY DATA");
+            return false;
+        }
+
+        SignalResult decision=selfDecision==null?best:selfDecision.decide(best,horizon,learner);
+
+        // v14.7 broker-board learning: every live frame may contribute to state
+        // stability, but only an exact future candle close is allowed to become
+        // a training label. No screenshots are saved.
+        boolean boardLearning=prefs.getBoolean("broker_board_learning",true);
+        if(boardLearning && boardLearner!=null && a.boardState!=null){
+            if(liveRefresh)boardLearner.observeLive(asset,selectedH,a.boardState);
+            if(automatic && targetBoundary>0L)
+                boardLearner.resolve(targetBoundary,asset,selectedH,a.latestY);
+            // Resolved board memory is safe to use on every frame. Live frames are
+            // never labels; they only query previously validated history.
+            decision=boardLearner.apply(asset,selectedH,a.boardState,decision);
+        }
+
+        // Self-learning is aligned to the exact completed-candle boundary. Only
+        // official automatic scans create/resolve labels; 1-second live frames
+        // and manual taps never become training labels.
+        if(automatic && targetBoundary>0L){
+            processLearningAtBoundary(targetBoundary,a,selectedH,decision);
+            if(boardLearning && boardLearner!=null && a.boardState!=null)
+                boardLearner.addPrediction(targetBoundary,asset,selectedH,selectedH+1,a.latestY,a.boardState);
+        }
+
+        if(liveRefresh){
+            QuickDecisionEngine.Result quick=null;
+            if(prefs.getBoolean("quick_decision",true) && quickDecision!=null && a.boardState!=null){
+                int quickThreshold=Math.max(78,Math.min(90,prefs.getInt("quick_decision_threshold",82)));
+                quick=quickDecision.update(asset,horizon,a.boardState,decision,quickThreshold);
+            }
+            showLiveDecision(decision,horizon,quick);
+            return true;
+        }
+
+        // Official/manual result: one clear next-candle direction. Strong alerts
+        // still require the stricter completed-candle quality gates from the base
+        // model, while the displayed probability uses the self-decision blend.
+        showDirection(decision,horizon);
+        if("BUY".equals(decision.label)||"SELL".equals(decision.label)){
+            showStrongSignal(decision,horizon);
+        } else {
+            clearStrongSignalCard();
+        }
+        return true;
+    }
+
+    private void showLiveStatus(String text){
+        main.post(()->{
+            if(!scannerEnabled())return;
+            showStatusOverlay("READY");
+            if(liveText!=null){
+                liveText.setText(text+" • 1s refresh");
+                liveText.setTextColor(Color.rgb(125,211,252));
+            }
+        });
+    }
+
+    private void showLiveDecision(SignalResult r,int horizon,QuickDecisionEngine.Result quick){
+        main.post(()->{
+            if(!scannerEnabled()||r==null)return;
+            showStatusOverlay("READY");
+            boolean buy=r.buyProbability>=r.sellProbability;
+            int pct=Math.max(r.buyProbability,r.sellProbability);
+            if(liveText!=null){
+                int learned=boardLearner==null?0:boardLearner.totalSamples();
+                if(quick!=null && quick.highChance){
+                    boolean qb="BUY".equals(quick.label);
+                    liveText.setText("QUICK "+quick.label+" "+quick.score+"% • M"+horizon+
+                            " • "+quick.confirmations+"/6 • STABLE "+quick.stableScans+
+                            (prefs.getBoolean("broker_board_learning",true)?" • BOARD "+learned:""));
+                    liveText.setTextColor(qb?Color.rgb(74,222,128):Color.rgb(248,113,113));
+                    if(statusText!=null){
+                        statusText.setText("HIGH-CONFIDENCE QUICK "+quick.label+" • "+quick.reason);
+                        statusText.setTextColor(qb?Color.rgb(134,239,172):Color.rgb(252,165,165));
+                    }
+                }else{
+                    String q=quick==null?"":(" • QUICK WAIT "+quick.confirmations+"/6");
+                    liveText.setText("AI LIVE 1s • "+(buy?"BUY ":"SELL ")+pct+"% • M"+horizon+q+
+                            (prefs.getBoolean("broker_board_learning",true)?" • BOARD "+learned:""));
+                    liveText.setTextColor(buy?Color.rgb(134,239,172):Color.rgb(252,165,165));
+                }
+            }
+        });
+    }
+
+    private void showUnavailable(String text){
+        main.post(()->{
+            if(!scannerEnabled())return;
+            showStatusOverlay("READY");
+            if(statusText!=null){
+                statusText.setText(text);
+                statusText.setTextColor(Color.rgb(34,211,238));
+            }
+            clearStrongSignalCard();
+            updateSymbolText();
+        });
+    }
+
+    private void showDirection(SignalResult r,int horizon){
+        main.post(()->{
+            if(!scannerEnabled())return;
+            showStatusOverlay("READY");
+            boolean buyLead=r.buyProbability>=r.sellProbability;
+            lastDirection=buyLead?"BUY":"SELL";
+            lastDirectionPercent=Math.max(r.buyProbability,r.sellProbability);
+            lastSignalHorizon=horizon;
+            int hi=Math.max(0,Math.min(4,horizon-1));
+            lastWinRateSamples=learner.recentCount(hi);
+            lastWinRate=lastWinRateSamples==0?-1:learner.recentAccuracyPct(hi);
+            if(predictionTargetStartMs<=0L){
+                int minutes=selectedTimeframeMinutes();
+                predictionTargetStartMs=minutes>0?nextBoundary(System.currentTimeMillis(),minutes):0L;
+            }
+            refreshSignalDisplay(System.currentTimeMillis());
+            updateSymbolText();
+        });
+    }
+
+    private void showStrongSignal(SignalResult r,int horizon){
+        main.post(()->{
+            if(!scannerEnabled())return;
+            int c="BUY".equals(r.label)?Color.rgb(134,239,172):Color.rgb(252,165,165);
+            showSignalCard(r,horizon,c);
+            maybeNotify(r,horizon);
+        });
+    }
+
+    private void clearStrongSignalCard(){
+        if(signalCard!=null){
+            try{wm.removeView(signalCard);}catch(Exception ignored){}
+            signalCard=null;
+        }
+    }
+
+    private void showStatusOverlay(String state){
+        if(wm==null)wm=(WindowManager)getSystemService(WINDOW_SERVICE);
+        if(statusBox!=null)return;
+
+        // Outer holder: round scan bubble on top, compact next-candle probability card below.
+        statusBox=new LinearLayout(this);
+        statusBox.setOrientation(LinearLayout.VERTICAL);
+        statusBox.setGravity(Gravity.CENTER_HORIZONTAL);
+        statusBox.setPadding(dp(2),dp(2),dp(2),dp(2));
+
+        final WindowManager.LayoutParams lp=new WindowManager.LayoutParams(
+                dp(190),
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity=Gravity.TOP|Gravity.END;
+        lp.x=dp(12);
+        lp.y=dp(120);
+
+        // Floating round bot button, similar to a chat-head. Tap = scan now; drag = move.
+        FrameLayout bubbleWrap=new FrameLayout(this);
+        LinearLayout.LayoutParams bubbleWrapLp=new LinearLayout.LayoutParams(dp(104),dp(96));
+        bubbleWrapLp.gravity=Gravity.CENTER_HORIZONTAL;
+        statusBox.addView(bubbleWrap,bubbleWrapLp);
+
+        TextView scanBubble=new TextView(this);
+        scanBubble.setText("AZ\nSCAN");
+        scanBubble.setTextSize(13);
+        scanBubble.setTypeface(null,Typeface.BOLD);
+        scanBubble.setGravity(Gravity.CENTER);
+        scanBubble.setTextColor(Color.WHITE);
+        scanBubble.setContentDescription("Tap to scan candle. Drag to move.");
+        scanBubble.setClickable(true);
+        GradientDrawable bubbleBg=new GradientDrawable();
+        bubbleBg.setShape(GradientDrawable.OVAL);
+        bubbleBg.setColor(Color.argb(248,7,20,32));
+        bubbleBg.setStroke(dp(3),Color.rgb(34,211,238));
+        scanBubble.setBackground(bubbleBg);
+        FrameLayout.LayoutParams scanLp=new FrameLayout.LayoutParams(dp(84),dp(84));
+        scanLp.gravity=Gravity.CENTER;
+        bubbleWrap.addView(scanBubble,scanLp);
+
+        // One-tap close/stop button attached to the bubble.
+        TextView closeButton=new TextView(this);
+        closeButton.setText("×");
+        closeButton.setTextSize(16);
+        closeButton.setTypeface(null,Typeface.BOLD);
+        closeButton.setGravity(Gravity.CENTER);
+        closeButton.setTextColor(Color.WHITE);
+        closeButton.setContentDescription("Close scanner");
+        GradientDrawable closeBg=new GradientDrawable();
+        closeBg.setShape(GradientDrawable.OVAL);
+        closeBg.setColor(Color.rgb(30,41,59));
+        closeBg.setStroke(dp(1),Color.rgb(248,113,113));
+        closeButton.setBackground(closeBg);
+        FrameLayout.LayoutParams closeLp=new FrameLayout.LayoutParams(dp(26),dp(26));
+        closeLp.gravity=Gravity.TOP|Gravity.END;
+        closeLp.setMargins(0,0,0,0);
+        bubbleWrap.addView(closeButton,closeLp);
+        closeButton.setOnClickListener(v->{
+            setScannerEnabled(this,false);
+            Toast.makeText(this,"Scanner closed",Toast.LENGTH_SHORT).show();
+        });
+
+        // Compact card under the bubble. It stays visible and reports BUY/SELL percentages.
+        LinearLayout statusCard=new LinearLayout(this);
+        statusCard.setOrientation(LinearLayout.VERTICAL);
+        statusCard.setGravity(Gravity.CENTER_HORIZONTAL);
+        statusCard.setPadding(dp(10),dp(8),dp(10),dp(8));
+        GradientDrawable cardBg=new GradientDrawable();
+        cardBg.setColor(Color.argb(242,11,18,32));
+        cardBg.setCornerRadius(dp(16));
+        cardBg.setStroke(dp(2),Color.rgb(34,211,238));
+        statusCard.setBackground(cardBg);
+
+        statusText=new TextView(this);
+        statusText.setText(state);
+        statusText.setTextSize(13);
+        statusText.setTypeface(null,Typeface.BOLD);
+        statusText.setGravity(Gravity.CENTER);
+        statusText.setTextColor(Color.rgb(34,211,238));
+        statusCard.addView(statusText,new LinearLayout.LayoutParams(dp(166),dp(100)));
+
+        symbolText=new TextView(this);
+        symbolText.setTextSize(11);
+        symbolText.setGravity(Gravity.CENTER);
+        symbolText.setTextColor(Color.rgb(203,213,225));
+        statusCard.addView(symbolText,new LinearLayout.LayoutParams(dp(166),WindowManager.LayoutParams.WRAP_CONTENT));
+        updateSymbolText();
+
+        timingText=new TextView(this);
+        timingText.setTextSize(10);
+        timingText.setGravity(Gravity.CENTER);
+        timingText.setTextColor(Color.rgb(226,232,240));
+        statusCard.addView(timingText,new LinearLayout.LayoutParams(dp(166),WindowManager.LayoutParams.WRAP_CONTENT));
+
+        liveText=new TextView(this);
+        liveText.setText("AI LIVE • starting 1s refresh");
+        liveText.setTextSize(10);
+        liveText.setTypeface(null,Typeface.BOLD);
+        liveText.setGravity(Gravity.CENTER);
+        liveText.setTextColor(Color.rgb(125,211,252));
+        statusCard.addView(liveText,new LinearLayout.LayoutParams(dp(166),WindowManager.LayoutParams.WRAP_CONTENT));
+
+        int tfMinutes=selectedTimeframeMinutes();
+        long nowForClock=System.currentTimeMillis();
+        updateTimingText(nowForClock,tfMinutes>0?nextBoundary(nowForClock,tfMinutes):0L);
+
+        TextView hint=new TextView(this);
+        hint.setText("LIVE = 1s AI refresh • FINAL = after candle close");
+        hint.setTextSize(9);
+        hint.setGravity(Gravity.CENTER);
+        hint.setTextColor(Color.rgb(148,163,184));
+        statusCard.addView(hint,new LinearLayout.LayoutParams(dp(166),WindowManager.LayoutParams.WRAP_CONTENT));
+        statusBox.addView(statusCard,new LinearLayout.LayoutParams(dp(182),WindowManager.LayoutParams.WRAP_CONTENT));
+
+        // Reliable tap-versus-drag handling. Small finger movement is still a TAP.
+        final int touchSlop=ViewConfiguration.get(this).getScaledTouchSlop();
+        scanBubble.setOnTouchListener(new View.OnTouchListener(){
+            int startX,startY;
+            float downX,downY;
+            boolean dragging;
+            @Override public boolean onTouch(View v,MotionEvent e){
+                switch(e.getActionMasked()){
+                    case MotionEvent.ACTION_DOWN:
+                        startX=lp.x; startY=lp.y;
+                        downX=e.getRawX(); downY=e.getRawY();
+                        dragging=false;
+                        v.setPressed(true);
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        float dx=e.getRawX()-downX;
+                        float dy=e.getRawY()-downY;
+                        if(!dragging && (Math.abs(dx)>touchSlop || Math.abs(dy)>touchSlop)) dragging=true;
+                        if(dragging){
+                            lp.x=Math.max(0,startX-(int)dx);
+                            lp.y=Math.max(0,startY+(int)dy);
+                            try{wm.updateViewLayout(statusBox,lp);}catch(Exception ignored){}
+                        }
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        v.setPressed(false);
+                        if(!dragging){
+                            runManualScan();
+                            v.performClick();
+                        }
+                        return true;
+                    case MotionEvent.ACTION_CANCEL:
+                        v.setPressed(false);
+                        return true;
+                    default:
+                        return true;
+                }
+            }
+        });
+
+        try{wm.addView(statusBox,lp);}catch(Exception e){statusBox=null;}
+    }
+
+    private void runManualScan(){
+        if(!scannerEnabled()){
+            Toast.makeText(this,"Scanner is off",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if(scanBusy){
+            Toast.makeText(this,"Scan already running",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if(statusText!=null){
+            statusText.setText("SCANNING…");
+            statusText.setTextColor(Color.rgb(34,211,238));
+        }
+        Toast.makeText(this,"Scanning candle…",Toast.LENGTH_SHORT).show();
+        int minutes=selectedTimeframeMinutes();
+        predictionTargetStartMs=minutes>0?nextBoundary(System.currentTimeMillis(),minutes):0L;
+        captureAndAnalyze();
+    }
+
+    private String pressureLine(SignalResult r){
+        if(r==null || r.regime==null)return "";
+        String x=r.regime;
+        int i=x.indexOf("PRESSURE ");
+        if(i<0)return "";
+        int end=x.indexOf(" • ",i);
+        if(end<0)end=x.length();
+        String v=x.substring(i,end).trim();
+        return v.isEmpty()?"":"BUYER / SELLER "+v;
+    }
+
+    private String shortSetup(SignalResult r){
+        if(r==null)return "MULTI-FACTOR CONFLUENCE";
+        String e=r.explanation==null?"":r.explanation;
+        String low=e.toLowerCase(Locale.US);
+        int a=low.indexOf("led by ");
+        if(a>=0){
+            int start=a+7;
+            int end=e.indexOf(';',start);
+            if(end<0)end=Math.min(e.length(),start+42);
+            String x=e.substring(start,end).trim();
+            if(!x.isEmpty())return x.toUpperCase(Locale.US);
+        }
+        if(r.structure!=null&&!r.structure.trim().isEmpty())return r.structure.toUpperCase(Locale.US);
+        return "MULTI-FACTOR CONFLUENCE";
+    }
+
+    private void showSignalCard(SignalResult r,int horizon,int c){
+        if(wm==null)return;
+        if(signalCard!=null){
+            try{wm.removeView(signalCard);}catch(Exception ignored){}
+            signalCard=null;
+        }
+
+        LinearLayout card=new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16),dp(12),dp(16),dp(12));
+        GradientDrawable bg=new GradientDrawable();
+        bg.setColor(Color.argb(245,11,18,32));
+        bg.setCornerRadius(dp(18));
+        bg.setStroke(dp(2),c);
+        card.setBackground(bg);
+
+        TextView title=new TextView(this);
+        String signalTime=clock(predictionTargetStartMs);
+        int pct="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
+        title.setText(r.label+"  "+pct+"%");
+        title.setTextSize(22);
+        title.setTypeface(null,Typeface.BOLD);
+        title.setTextColor(c);
+        card.addView(title);
+
+        int hi=Math.max(0,Math.min(4,horizon-1));
+        int recentN=learner.recentCount(hi);
+        String recent=recentN<5?"WIN RATE: LEARNING":("RECENT WIN RATE "+learner.recentAccuracyPct(hi)+"% ("+recentN+")");
+        TextView pair=new TextView(this);
+        String pressure=pressureLine(r);
+        pair.setText(currentAsset()+" • M"+horizon+"\n"+r.label+" ENTRY "+signalTime+"\n"+entryState(System.currentTimeMillis(),predictionTargetStartMs)+"\nSETUP: "+shortSetup(r)+(pressure.isEmpty()?"":"\n"+pressure)+"\n"+recent);
+        pair.setTextSize(13);
+        pair.setTextColor(Color.WHITE);
+        card.addView(pair);
+
+        LinearLayout actions=new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        Button open=new Button(this); open.setText("OPEN"); open.setAllCaps(false);
+        Button close=new Button(this); close.setText("CLOSE"); close.setAllCaps(false);
+        actions.addView(open,new LinearLayout.LayoutParams(0,dp(46),1));
+        actions.addView(close,new LinearLayout.LayoutParams(0,dp(46),1));
+        card.addView(actions);
+
+        open.setOnClickListener(v->{
+            Intent in=new Intent(this,MainActivity.class);
+            in.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(in);
+        });
+        close.setOnClickListener(v->{
+            try{wm.removeView(card);}catch(Exception ignored){}
+            if(signalCard==card)signalCard=null;
+            cancelSignalNotification();
+        });
+
+        WindowManager.LayoutParams lp=new WindowManager.LayoutParams(
+                dp(275),WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity=Gravity.CENTER_HORIZONTAL|Gravity.TOP;
+        lp.y=dp(170);
+        try{wm.addView(card,lp);signalCard=card;}catch(Exception ignored){}
+    }
+
+    private void maybeNotify(SignalResult r,int horizon){
+        if(r==null || !("BUY".equals(r.label)||"SELL".equals(r.label)))return;
+
+        // A strong model signal is not a guaranteed trade. Sound is deliberately
+        // reserved for a user-configurable high-confidence subset so normal
+        // candle-by-candle analysis remains quiet.
+        int pct="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
+        int alertThreshold=Math.max(75,Math.min(90,
+                prefs==null?85:prefs.getInt("sound_alert_threshold",85)));
+        boolean soundEnabled=prefs==null || prefs.getBoolean("sound_alerts",true);
+        if(!soundEnabled || pct<alertThreshold)return;
+
+        long now=System.currentTimeMillis();
+        long candleKey=predictionTargetStartMs>0L?predictionTargetStartMs:(now/60_000L)*60_000L;
+        String key=currentAsset()+"|"+r.label+"|M"+horizon+"|"+candleKey;
+        if(key.equals(lastAlertKey))return;
+        lastAlertKey=key; lastAlertAt=now;
+
+        Intent openIntent=new Intent(this,MainActivity.class);
+        openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent open=PendingIntent.getActivity(this,21,openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+
+        Intent closeIntent=new Intent(this,SignalDismissReceiver.class);
+        closeIntent.setAction("scanner.DISMISS_SIGNAL");
+        PendingIntent close=PendingIntent.getBroadcast(this,22,closeIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+
+        int icon="BUY".equals(r.label)?android.R.drawable.arrow_up_float:android.R.drawable.arrow_down_float;
+        Notification.Builder n=Build.VERSION.SDK_INT>=26
+                ?new Notification.Builder(this,SIGNAL_CH):new Notification.Builder(this);
+        int hi=Math.max(0,Math.min(4,horizon-1));
+        int rn=learner.recentCount(hi);
+        String wr=rn<5?"WIN RATE LEARNING":("WIN RATE "+learner.recentAccuracyPct(hi)+"%");
+        n.setSmallIcon(icon)
+                .setContentTitle(r.label+" "+pct+"% • ENTRY "+clock(predictionTargetStartMs))
+                .setContentText(currentAsset()+" • M"+horizon+" • "+wr)
+                .setAutoCancel(true)
+                .setContentIntent(open)
+                .setPriority(Notification.PRIORITY_HIGH)
+                .setCategory(Notification.CATEGORY_RECOMMENDATION)
+                .setOnlyAlertOnce(true)
+                .setDefaults(Build.VERSION.SDK_INT<26 ? (Notification.DEFAULT_SOUND|Notification.DEFAULT_VIBRATE) : 0)
+                .addAction(new Notification.Action.Builder(0,"OPEN",open).build())
+                .addAction(new Notification.Action.Builder(0,"CLOSE",close).build());
+        getSystemService(NotificationManager.class).notify(SIGNAL_ID,n.build());
+    }
+
+    public static void dismissSignalOverlay(){
+        AutoSymbolAccessibilityService s=instance;
+        if(s!=null)s.main.post(()->{
+            if(s.signalCard!=null){
+                try{s.wm.removeView(s.signalCard);}catch(Exception ignored){}
+                s.signalCard=null;
+            }
+            s.cancelSignalNotification();
+        });
+    }
+
+    private void cancelSignalNotification(){
+        try{getSystemService(NotificationManager.class).cancel(SIGNAL_ID);}catch(Exception ignored){}
+    }
+
+    private void createNotificationChannel(){
+        if(Build.VERSION.SDK_INT>=26){
+            NotificationChannel ch=new NotificationChannel(
+                    SIGNAL_CH,"High-confidence BUY / SELL sound alerts",NotificationManager.IMPORTANCE_HIGH);
+            ch.setDescription("Sound and vibration only when the completed-candle signal reaches the selected confidence threshold");
+            ch.enableVibration(true);
+            ch.setVibrationPattern(new long[]{0,180,90,220});
+            Uri sound=RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+            AudioAttributes attrs=new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build();
+            ch.setSound(sound,attrs);
+            getSystemService(NotificationManager.class).createNotificationChannel(ch);
+        }
+    }
+
+    private void updateSymbolText(){
+        if(symbolText==null)return;
+        String a=currentAsset();
+        String tf=currentTimeframeLabel();
+        String mode=prefs==null?"AUTO":prefs.getString("timeframe_mode","AUTO");
+        long tt=prefs==null?0L:prefs.getLong("detected_timeframe_time",0L);
+        boolean fallback="AUTO".equalsIgnoreCase(mode) &&
+                (tt==0L || System.currentTimeMillis()-tt>30*60_000L);
+        symbolText.setText(("AUTO_CHART".equals(a)?"AUTO chart":a)+" • "+tf+(fallback?" fallback":""));
+    }
+
+    private String currentTimeframeLabel(){
+        if(prefs==null)prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
+        String mode=prefs.getString("timeframe_mode","AUTO").toUpperCase(Locale.US);
+        if(!"AUTO".equals(mode))return mode;
+        String tf=prefs.getString("detected_timeframe","").toUpperCase(Locale.US);
+        long t=prefs.getLong("detected_timeframe_time",0L);
+        if(tf.matches("M[1-5]") && System.currentTimeMillis()-t<=30*60_000L)return tf;
+        String last=prefs.getString("last_valid_timeframe","M1").toUpperCase(Locale.US);
+        // AUTO must never silently stop. When a canvas-based broker hides its
+        // timeframe from Accessibility, keep scanning with the last known value;
+        // M1 is the explicit first-run fallback and is shown in the UI as fallback.
+        return last.matches("M[1-5]")?last:"M1";
+    }
+
+    private int selectedHorizonIndex(){
+        String tf=currentTimeframeLabel();
+        if(tf.matches("M[1-5]"))return tf.charAt(1)-'1';
+        return -1;
+    }
+
+    private String currentAsset(){
+        if(prefs==null)prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
+        String a=prefs.getString("detected_asset","").trim().toUpperCase(Locale.US);
+        long t=prefs.getLong("detected_asset_time",0L);
+        // Keep one learning identity stable during a normal trading session.
+        // A new detected symbol still replaces it immediately.
+        if(a.isEmpty()||System.currentTimeMillis()-t>60*60_000L)return "AUTO_CHART";
+        return a;
+    }
+
+    private void processLearningAtBoundary(long boundary,CandleVision.Analysis now,
+                                           int selectedH,SignalResult displayed){
+        if(now==null||!now.valid||now.detectedBins<8||selectedH<0||selectedH>4)return;
+        String asset=currentAsset();
+        learner.setAsset(asset);
+
+        List<TrainingStore.Pending> pending=training.load();
+        java.util.ArrayList<TrainingStore.Pending> keep=new java.util.ArrayList<>();
+        for(TrainingStore.Pending p:pending){
+            // Never mix symbols or timeframes. These records are normally cleared
+            // on chart changes, but the checks make the stored data robust to restarts.
+            if(!asset.equalsIgnoreCase(p.asset) || p.horizon!=selectedH){
+                if(p.dueAt>boundary)keep.add(p);
+                continue;
+            }
+
+            if(p.dueAt==boundary){
+                double delta=p.entryY-now.latestY; // screen Y falls when price rises
+                if(Math.abs(delta)>=0.0035){
+                    boolean up=delta>0;
+                    boolean predictedUp=p.displayedBuyP>=0.5;
+                    boolean correct=predictedUp==up;
+                    learner.update(p.horizon,p.rawBuyP,p.displayedBuyP,up);
+                    learner.updateSetup(p.horizon,p.setup,correct);
+                    training.appendResolved(p,now.latestY,up,correct);
+                    CommunityLearningSync.queueResolved(this,p,up,correct);
+                }
+                // Tiny/flat moves are deliberately left unlabelled rather than
+                // forcing a noisy win/loss from anti-aliased screen pixels.
+            }else if(p.dueAt>boundary){
+                keep.add(p);
+            }
+            // p.dueAt < boundary means the exact close was missed. Discard it;
+            // using a later candle would corrupt the learner.
+        }
+        training.save(keep);
+
+        int minutes=selectedH+1;
+        SignalResult base=now.horizons!=null && selectedH<now.horizons.length
+                ?now.horizons[selectedH]:null;
+        if(base!=null && displayed!=null){
+            // Store raw model probability for calibration, but the probability
+            // actually displayed by the Self-AI for win-rate accounting.
+            SignalResult sample=new SignalResult(
+                    displayed.label,displayed.strength,displayed.score,
+                    displayed.buyProbability,displayed.sellProbability,
+                    displayed.confidence,base.regime,base.rawBuyProbability,
+                    displayed.setupQuality,displayed.structure,displayed.explanation);
+            training.addPrediction(boundary,asset,selectedH,minutes,now.latestY,sample);
+        }
+    }
+
+    private void removeOverlays(){
+        if(wm!=null){
+            if(signalCard!=null){try{wm.removeView(signalCard);}catch(Exception ignored){}}
+            if(statusBox!=null){try{wm.removeView(statusBox);}catch(Exception ignored){}}
+        }
+        signalCard=null; statusBox=null; statusText=null; symbolText=null; timingText=null; liveText=null;
+    }
+
+    private String collectVisibleText(AccessibilityNodeInfo root){
+        StringBuilder out=new StringBuilder(2048);
+        ArrayDeque<AccessibilityNodeInfo> q=new ArrayDeque<>();
+        q.add(root); int visited=0;
+        while(!q.isEmpty()&&visited<1200){
+            AccessibilityNodeInfo n=q.removeFirst(); visited++;
+            CharSequence t=n.getText(),d=n.getContentDescription();
+            if(t!=null&&t.length()<=120)out.append(' ').append(t);
+            if(d!=null&&d.length()<=120)out.append(' ').append(d);
+            int count=n.getChildCount();
+            for(int i=0;i<count;i++){
+                AccessibilityNodeInfo child=n.getChild(i);
+                if(child!=null)q.addLast(child);
+            }
+            if(n!=root)n.recycle();
+        }
+        return out.toString();
+    }
+
+    static String detectSymbol(String text){
+        if(text==null)return null;
+        String u=text.toUpperCase(Locale.US).replace('\u00A0',' ')
+                .replace("／","/").replace("–","-").replace("—","-");
+        Matcher m=PAIR.matcher(u);
+        if(!m.find())return null;
+        String a=m.group(1).toUpperCase(Locale.US),b=m.group(2).toUpperCase(Locale.US);
+        if(a.equals(b))return null;
+        String symbol=a+"/"+b;
+        int s=Math.max(0,m.start()-50),e=Math.min(u.length(),m.end()+50);
+        if(u.substring(s,e).contains("OTC"))symbol+=" OTC";
+        return symbol;
+    }
+
+    static String detectTimeframe(String text){
+        if(text==null)return null;
+        String u=text.toUpperCase(Locale.US).replace('\u00A0',' ')
+                .replace("／","/").replace("–","-").replace("—","-");
+        Matcher m=TF_M.matcher(u);
+        if(m.find())return "M"+m.group(1);
+
+        // Prefer values close to chart/time words when the broker exposes 1m/2 min style text.
+        Matcher n=TF_MIN.matcher(u);
+        while(n.find()){
+            int s=Math.max(0,n.start()-36),e=Math.min(u.length(),n.end()+36);
+            String around=u.substring(s,e);
+            if(around.contains("TIME")||around.contains("CHART")||around.contains("CANDLE")||
+                    around.contains("EXPIR")||around.contains("INTERVAL"))
+                return "M"+n.group(1);
+        }
+        return null;
+    }
+
+    private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
+}

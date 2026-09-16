@@ -1,0 +1,16 @@
+CandleScanner v14.9 — QUICK DECISION + BROKER BOARD LEARNING
+
+- Adds QuickDecisionEngine for fast live broker-board decisions.
+- Live board is scanned every ~1 second using the existing Accessibility screenshot path.
+- QUICK BUY/SELL requires at least 3 consecutive stable scans in the same direction.
+- Requires at least 4 independent confirmations: base model, trend, momentum, multi-candle flow, candle/rejection geometry and acceleration.
+- If the base model is WAIT, QUICK mode requires at least 5 confirmations and at least 84% quick score.
+- Adds coarse recent sequence bias and acceleration to the live board state.
+- Validated Broker Board Learning memory is now blended into live calculations as well as completed-candle calculations.
+- Live frames never become learning labels. Only the exact future closed candle updates board learning.
+- Extreme volatility and ambiguous doji states block QUICK entries.
+- Adds Quick Decision toggle and 78–90 score threshold setting. Default: 82.
+- Official sound/notification remains tied to completed-candle BUY/SELL signals; QUICK is a visual provisional alert.
+- Keeps all v14.8 pressure/pattern learning, history learning, local self-learning and shared calibration.
+
+Important: the percentage is a model score, not a guaranteed win probability. No automatic trade execution is added.

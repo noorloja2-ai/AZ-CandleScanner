@@ -1,0 +1,12 @@
+CandleScanner v14.5 — Automatic Shared Learning
+
+- Preserves all v14.4.2 scanner, knowledge, self-learning and Google Drive app-update features.
+- Removes the Community Learning checkbox and manual SYNC button.
+- Shared learning is always on.
+- Adds throttled automatic GitHub config/model refresh.
+- Downloads validated community-model.json independently of APK updates.
+- Queues resolved numeric results automatically and uploads them through the configured protected HTTPS gateway.
+- Never embeds a GitHub write token in the APK.
+- No screenshots, broker credentials, Android identifiers, contacts or location are sent.
+- Community model remains limited to a maximum 25% blend with local calibration.
+- Confidence remains a model score, not a guaranteed win rate.

@@ -1,0 +1,12 @@
+CandleScanner v14.6 History Entry Learning
+
+Android package: com.example.floatingcandlescanner.az
+versionName: 14.6
+versionCode: 51
+compileSdk: 35
+targetSdk: 35
+minSdk: 26
+Java: 17
+
+GitHub Actions workflow included at .github/workflows/build-apk.yml.
+It builds app/build/outputs/apk/debug/app-debug.apk on push to main or manual workflow_dispatch.

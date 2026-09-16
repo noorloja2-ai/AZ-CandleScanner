@@ -1,0 +1,15 @@
+CandleScanner v14.8 — BUYER/SELLER PRESSURE + PATTERN LEARNING
+
+Added from the user's new candlestick reference images:
+- Buyer-vs-seller pressure scoring from candle body participation, range and wick rejection.
+- Explicit BUYER / SELLER pressure line on the floating signal card.
+- Single-candle context: Doji, Dragonfly Doji, Gravestone Doji, Hammer, Inverted Hammer, Hanging Man, Shooting Star, Spinning Top, bullish/bearish Marubozu.
+- Two-candle context: Bullish/Bearish Engulfing, Bullish/Bearish Harami, Piercing Line, Dark Cloud Cover, Tweezer Bottom/Top, Bullish/Bearish Kicker.
+- Three-candle context: Morning Star, Evening Star, Three White Soldiers, Three Black Crows, Three Inside Up/Down, Three Outside Up/Down.
+- Continuation context: Rising Three Method and Falling Three Method.
+- Key-level context: support rejection, resistance rejection, breakout + retest, breakdown + retest.
+- High Accuracy requires pattern/context/pressure confirmation instead of treating one candle name as a prediction.
+- Pattern names are stored in the existing training setup field when strong, so resolved next-candle outcomes teach the app which setups actually work on the user's broker/asset/timeframe.
+- Existing v14.7 broker-board learning, v14.6 history learning, local self-learning and automatic shared learning are preserved.
+
+Important: candlestick patterns and pressure are probabilistic evidence, not guaranteed future direction. Screenshot geometry is approximate, especially on OTC broker charts.

@@ -1,0 +1,7 @@
+CandleScanner v14.4
+- Google Drive becomes primary in-app update source.
+- Permanent Drive manifest URL added.
+- Manifest supports version, apkFileId/apkUrl, apkName, notes.
+- GitHub retained as backup only.
+- All previous PDF knowledge and local/community learning preserved.
+- versionCode 47 / versionName 14.4.

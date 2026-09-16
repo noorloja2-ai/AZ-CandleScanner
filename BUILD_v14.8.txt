@@ -1,0 +1,15 @@
+CandleScanner v14.8
+Package: com.example.floatingcandlescanner.az
+versionName: 14.8
+versionCode: 53
+compileSdk: 35
+targetSdk: 35
+minSdk: 26
+Java: 17
+
+Validation performed in this environment:
+- PressurePatternEngine.java compiled with javac successfully.
+- TradingBrain.java plus all pure-Java prediction engines compiled successfully using a minimal OnlineLearner stub.
+- Java delimiter count check passed for modified files.
+
+Full Android APK compilation still requires Gradle + Android SDK or the repository GitHub Actions workflow.
