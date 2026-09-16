@@ -1,0 +1,14 @@
+CandleScanner v15.1 — Safer High Chance
+
+- Shows recommended trade duration: M1 60s, M2 120s, M3 180s, M4 240s, M5 300s.
+- Renames qualified quick decisions to HIGH CHANCE and displays the supporting reasons.
+- Adds NO TRADE protection for trend/momentum conflict, flat markets, weak/doji candles,
+  extreme late entries and abnormal volatility.
+- Keeps only the AZ SCAN logo visible over the broker during normal scanning.
+- Automatically opens a closable HIGH CHANCE signal card; exceptionally strong qualified
+  setups are marked MOST SURE.
+- Keeps official signal timing locked to completed candles.
+- Preserves broker-board learning, local self-learning, validated community learning and
+  the permanent signed GitHub in-app update channel.
+
+No signal is guaranteed and the app does not place trades automatically.
