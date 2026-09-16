@@ -1,0 +1,9 @@
+CandleScanner v15.5 — Old-Style AZ Live Information
+
+- Restores the detailed live information shown by the v14.2 AZ panel.
+- Shows chart, timeframe, recommended duration, live BUY/SELL direction and percentage.
+- Shows completed-candle FINAL direction, entry time/status and recent win rate.
+- Shows the next candle time and a live countdown.
+- The information remains open until CLOSE is pressed.
+
+Signals are estimates, not guarantees. The app does not place trades automatically.
