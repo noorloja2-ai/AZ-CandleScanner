@@ -1,5 +1,5 @@
 {
   "schema": 1,
   "submit_url": "https://YOUR-PROTECTED-GATEWAY.example.com/candlescanner/learning",
-  "model_url": "https://raw.githubusercontent.com/anamul22-1995/m1-signal-bot/main/community-model.json"
+  "model_url": "https://raw.githubusercontent.com/noorloja2-ai/AZ-CandleScanner/main/community-model.json"
 }
