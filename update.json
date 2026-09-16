@@ -1,6 +1,6 @@
 {
-  "version": "15.3",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v15.3/CandleScanner_v15.3.apk",
-  "apkName": "CandleScanner_v15.3.apk",
-  "notes": "Tap a BUY / SELL notification to reopen all signal information. The notification stays visible until CLOSE is pressed."
+  "version": "15.4",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v15.4/CandleScanner_v15.4.apk",
+  "apkName": "CandleScanner_v15.4.apk",
+  "notes": "Touch AZ once: its information panel now stays open until CLOSE is pressed. Scan refreshes cannot dismiss it."
 }
