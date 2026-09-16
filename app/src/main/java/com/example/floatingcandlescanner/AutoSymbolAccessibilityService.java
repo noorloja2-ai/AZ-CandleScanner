@@ -81,6 +81,8 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private int lastSignalHorizon=0;
     private int lastWinRate=-1;
     private int lastWinRateSamples=0;
+    private SignalResult lastNotifiedSignal;
+    private int lastNotifiedHorizon=1;
 
     private final Runnable scanTick=new Runnable(){
         @Override public void run(){
@@ -911,9 +913,12 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(key.equals(lastAlertKey))return;
         lastAlertKey=key; lastAlertAt=now;
 
-        Intent openIntent=new Intent(this,MainActivity.class);
-        openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        PendingIntent open=PendingIntent.getActivity(this,21,openIntent,
+        lastNotifiedSignal=r;
+        lastNotifiedHorizon=horizon;
+
+        Intent showIntent=new Intent(this,SignalDismissReceiver.class);
+        showIntent.setAction("scanner.SHOW_SIGNAL");
+        PendingIntent open=PendingIntent.getBroadcast(this,21,showIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
 
         Intent closeIntent=new Intent(this,SignalDismissReceiver.class);
@@ -927,10 +932,15 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         int hi=Math.max(0,Math.min(4,horizon-1));
         int rn=learner.recentCount(hi);
         String wr=rn<5?"WIN RATE LEARNING":("WIN RATE "+learner.recentAccuracyPct(hi)+"%");
+        String fullInfo=currentAsset()+" • M"+horizon+" • TRADE "+tradeDuration(horizon)+"\n"+
+                r.label+" ENTRY "+clock(predictionTargetStartMs)+" • "+entryState(now,predictionTargetStartMs)+"\n"+
+                "SETUP: "+shortSetup(r)+(pressureLine(r).isEmpty()?"":"\n"+pressureLine(r))+"\n"+wr;
         n.setSmallIcon(icon)
                 .setContentTitle(r.label+" "+pct+"% • ENTRY "+clock(predictionTargetStartMs))
                 .setContentText(currentAsset()+" • M"+horizon+" • "+wr)
-                .setAutoCancel(true)
+                .setStyle(new Notification.BigTextStyle().bigText(fullInfo))
+                .setAutoCancel(false)
+                .setOngoing(true)
                 .setContentIntent(open)
                 .setPriority(Notification.PRIORITY_HIGH)
                 .setCategory(Notification.CATEGORY_RECOMMENDATION)
@@ -944,6 +954,17 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private String tradeDuration(int horizon){
         int minutes=Math.max(1,Math.min(5,horizon));
         return (minutes*60)+"s";
+    }
+
+    public static void showLastSignalOverlay(){
+        AutoSymbolAccessibilityService s=instance;
+        if(s!=null)s.main.post(()->{
+            if(s.lastNotifiedSignal!=null){
+                int color="BUY".equals(s.lastNotifiedSignal.label)
+                        ?Color.rgb(74,222,128):Color.rgb(248,113,113);
+                s.showSignalCard(s.lastNotifiedSignal,s.lastNotifiedHorizon,color);
+            }
+        });
     }
 
     public static void dismissSignalOverlay(){
