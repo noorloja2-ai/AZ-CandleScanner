@@ -1,6 +1,6 @@
 {
-  "version": "15.4",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v15.4/CandleScanner_v15.4.apk",
-  "apkName": "CandleScanner_v15.4.apk",
-  "notes": "Touch AZ once: its information panel now stays open until CLOSE is pressed. Scan refreshes cannot dismiss it."
+  "version": "15.5",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v15.5/CandleScanner_v15.5.apk",
+  "apkName": "CandleScanner_v15.5.apk",
+  "notes": "Restores the old v14.2-style AZ live information: chart, timeframe, live BUY/SELL, percentage, final entry, win rate and next-candle countdown. Stays open until CLOSE."
 }
