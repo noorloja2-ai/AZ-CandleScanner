@@ -1,0 +1,10 @@
+CandleScanner v15.3 — Full Notification Information
+
+- Tap a BUY / SELL notification to reopen the complete signal card.
+- The expanded notification includes asset, timeframe, trade duration, entry time,
+  entry status, setup, buyer/seller pressure and recent win-rate information.
+- Notifications remain visible until CLOSE is pressed.
+- CLOSE removes both the signal card and its notification.
+- Keeps AZ tap scanning, HIGH CHANCE / MOST SURE safety filters and self-learning.
+
+Signals are estimates, not guarantees. The app does not place trades automatically.
