@@ -52,13 +52,13 @@ public class MainActivity extends Activity {
         brand.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(brand);
 
-        TextView title=tx("BUY / SELL Entry Signal v14.9 QUICK DECISION + BOARD LEARNING AZ",22,Color.WHITE);
+        TextView title=tx("BUY / SELL Entry Signal v15.0 PERMANENT SERVER UPDATE AZ",22,Color.WHITE);
         title.setTypeface(null,1);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(title);
 
         TextView d=tx(
-                "v14.9 Quick Decision Edition: scans the live broker candle board every second, uses validated board memory plus trend, momentum, candle flow, acceleration, body/wick pressure and support/resistance context, and shows a QUICK BUY/SELL only after repeated stable confirmation. Future closed candles still provide the learning labels. Keeps all v14.8 pressure/pattern knowledge and earlier self-learning. Screenshots and broker credentials are never stored; no automatic trading.",
+                "v15.0 Permanent Update Edition: keeps every v14.9 Quick Decision, broker-board, pressure/pattern and self-learning feature, and adds the permanent GitHub in-app update channel. Screenshots and broker credentials are never stored; no automatic trading.",
                 14,Color.rgb(148,163,184));
         d.setPadding(0,dp(8),0,dp(16));
         root.addView(d);
@@ -92,7 +92,7 @@ public class MainActivity extends Activity {
         root.addView(autoUpdateCheck);
 
         TextView updateNote=tx(
-                "App updates are checked from Google Drive only. A newer APK can be downloaded automatically, but Android always shows the normal install confirmation. Future APKs must use the same signing certificate to install as an update.",
+                "App updates are checked from the permanent AZ GitHub update channel. A newer APK can be downloaded automatically, but Android always shows the normal install confirmation. Future APKs use the same permanent signing certificate.",
                 12,Color.rgb(251,191,36));
         updateNote.setPadding(0,0,0,dp(12));
         root.addView(updateNote);
@@ -277,7 +277,7 @@ public class MainActivity extends Activity {
         root.addView(soundNote);
 
         TextView refreshNote=tx(
-                "Live AI refresh: every 1 second. v14.9 can show a provisional QUICK BUY/SELL after 3 stable scans and multi-factor confirmation; the official entry signal and sound are still locked to the completed candle.",
+                "Live AI refresh: every 1 second. v15.0 can show a provisional QUICK BUY/SELL after 3 stable scans and multi-factor confirmation; the official entry signal and sound are still locked to the completed candle.",
                 12,Color.rgb(125,211,252));
         refreshNote.setPadding(0,0,0,dp(8));
         root.addView(refreshNote);
