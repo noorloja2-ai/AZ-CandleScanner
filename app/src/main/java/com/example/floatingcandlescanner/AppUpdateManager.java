@@ -18,13 +18,13 @@ import java.net.URL;
 
 /**
  * Simple self-update helper for privately distributed APK builds.
- * It checks the Google Drive manifest, downloads the APK with DownloadManager,
+ * It checks the permanent GitHub manifest, downloads the APK with DownloadManager,
  * and then opens Android's normal package installer. Android still requires the
  * user to approve installation; silent self-installation is intentionally not used.
  */
 public final class AppUpdateManager {
-    private static final String DRIVE_MANIFEST_URL =
-            "https://docs.google.com/document/d/1dxcuR_mai79CamYwzWfqH83JynhUVIcfXTXzYXTyZT8/export?format=txt";
+    private static final String UPDATE_MANIFEST_URL =
+            "https://raw.githubusercontent.com/noorloja2-ai/AZ-CandleScanner/main/update.json";
     private static final String APK_MIME = "application/vnd.android.package-archive";
 
     private final Activity activity;
@@ -47,13 +47,13 @@ public final class AppUpdateManager {
     }
 
     public void checkForUpdate(boolean showNoUpdateMessage) {
-        setStatus("Checking Google Drive for app update…");
+        setStatus("Checking GitHub for app update…");
         new Thread(() -> {
             boolean ok = checkDriveManifest(showNoUpdateMessage);
             if (!ok) {
                 activity.runOnUiThread(() -> {
-                    setStatus("Google Drive update source is unavailable. Check Drive sharing and try again.");
-                    if (showNoUpdateMessage) toast("Could not read the Google Drive update file.");
+                    setStatus("GitHub update source is unavailable. Check your internet connection and try again.");
+                    if (showNoUpdateMessage) toast("Could not read the GitHub update file.");
                 });
             }
         }, "app-update-check").start();
@@ -62,7 +62,7 @@ public final class AppUpdateManager {
     private boolean checkDriveManifest(boolean showNoUpdateMessage) {
         HttpURLConnection c = null;
         try {
-            c = (HttpURLConnection) new URL(DRIVE_MANIFEST_URL).openConnection();
+            c = (HttpURLConnection) new URL(UPDATE_MANIFEST_URL).openConnection();
             c.setConnectTimeout(9000);
             c.setReadTimeout(9000);
             c.setInstanceFollowRedirects(true);
