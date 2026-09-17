@@ -65,6 +65,12 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private BrokerBoardLearner boardLearner;
     private SelfDecisionEngine selfDecision;
     private QuickDecisionEngine quickDecision;
+    private MarketDataService marketData;
+    private volatile TechnicalModel.Multi externalTechnical;
+    private volatile String externalAsset="";
+    private volatile String externalStatus="WEB DATA OFF";
+    private volatile long externalUpdatedAt=0L;
+    private volatile boolean externalFetching=false;
     private SharedPreferences prefs;
     private CandleVision.Analysis lastAnalysis;
     private long lastAlertAt=0L;
@@ -113,6 +119,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         boardLearner=new BrokerBoardLearner(this);
         selfDecision=new SelfDecisionEngine();
         quickDecision=new QuickDecisionEngine();
+        marketData=new MarketDataService();
         learner.setAsset(currentAsset());
         CommunityLearningSync.refreshAndFlushAsync(this);
         wm=(WindowManager)getSystemService(WINDOW_SERVICE);
@@ -445,12 +452,24 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 prefs.getInt("right",96),prefs.getInt("bottom",80),
                 prefs.getInt("theme",0),prefs.getInt("sensitivity",1),
                 learner,prefs.getBoolean("high_accuracy",true));
-        lastAnalysis=a;
         if(a==null||!a.valid||a.detectedBins<8){
             if(liveRefresh)showLiveStatus("AI LIVE • FINDING CANDLES");
             else showUnavailable("FINDING CANDLES");
             return false;
         }
+        requestExternalWebData(asset);
+        TechnicalModel.Multi web=usableExternalData(asset);
+        if(web!=null){
+            boolean otc=asset.toUpperCase(Locale.US).contains("OTC");
+            HybridPredictionEngine.Fusion fused=HybridPredictionEngine.fuse(
+                    a.horizons,web,prefs.getBoolean("high_accuracy",true),
+                    prefs.getBoolean("elite_mode",true),prefs.getInt("sensitivity",1),
+                    prefs.getString("session_filter","ALL"),prefs.getLong("news_lock_until",0L),
+                    learner,otc?.20:.45,otc?"REAL-MARKET CONTEXT FOR OTC":"LIVE OHLC");
+            a=new CandleVision.Analysis(fused.results,a.detectedBins,a.latestY,a.valid,a.boardState);
+            externalStatus=fused.dataStatus+(otc?" • OTC CONTEXT ONLY":"");
+        }
+        lastAnalysis=a;
         if(selfDecision!=null)selfDecision.observe(a.horizons);
 
         int selectedH=selectedHorizonIndex();
@@ -517,6 +536,50 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             clearStrongSignalCard();
         }
         return true;
+    }
+
+    private void requestExternalWebData(String asset){
+        String key=RuntimeSecrets.getMarketDataKey();
+        String symbol=externalSymbol(asset);
+        if(key==null||key.trim().isEmpty()||symbol.isEmpty()){
+            externalStatus=key==null||key.trim().isEmpty()
+                    ?"WEB DATA OFF • API KEY NEEDED":"WEB DATA UNSUPPORTED";
+            return;
+        }
+        long now=System.currentTimeMillis();
+        if(symbol.equals(externalAsset)&&externalTechnical!=null&&now-externalUpdatedAt<40_000L)return;
+        if(externalFetching)return;
+        externalFetching=true;
+        new Thread(()->{
+            try{
+                MarketDataService.Bundle bundle=marketData.fetchAll(key,symbol);
+                externalTechnical=TechnicalModel.analyze(bundle);
+                externalAsset=symbol;
+                externalUpdatedAt=System.currentTimeMillis();
+                externalStatus="WEB OHLC ACTIVE • "+symbol;
+            }catch(Exception e){
+                externalStatus="WEB DATA WAITING • "+safeExternalError(e);
+            }finally{externalFetching=false;}
+        },"external-market-ai").start();
+    }
+
+    private TechnicalModel.Multi usableExternalData(String asset){
+        String symbol=externalSymbol(asset);
+        if(symbol.isEmpty()||!symbol.equals(externalAsset)||externalTechnical==null)return null;
+        return System.currentTimeMillis()-externalUpdatedAt<=2L*60L*1000L?externalTechnical:null;
+    }
+
+    private static String externalSymbol(String asset){
+        if(asset==null)return "";
+        Matcher m=PAIR.matcher(asset.toUpperCase(Locale.US).replace("OTC"," "));
+        if(!m.find())return "";
+        return m.group(1)+"/"+m.group(2);
+    }
+
+    private static String safeExternalError(Exception e){
+        String m=e==null?"unavailable":e.getMessage();
+        if(m==null||m.trim().isEmpty())m="unavailable";
+        return m.length()>80?m.substring(0,80):m;
     }
 
     private void showLiveStatus(String text){
@@ -813,6 +876,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         infoDetails.setText(
                 "Chart: "+currentAsset()+" • M"+horizon+"\n"+
                 "Recommended trade: "+tradeDuration(horizon)+"\n\n"+
+                "External AI: "+externalStatus+"\n"+
                 live+"\n"+
                 finalSignal+"\n"+
                 entryState(now,predictionTargetStartMs)+"\n"+
