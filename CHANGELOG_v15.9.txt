@@ -1,0 +1,14 @@
+AZ CandleScanner v15.9 — Web AI Fusion
+
+- Connects the existing Twelve Data client to the actual AZ prediction path.
+- Downloads and analyses public M1, M5 and M15 OHLC candles when the user supplies a session-only API key.
+- Adds EMA 9/21/50/200, RSI, MACD, ADX, ATR, support/resistance and Fibonacci context to broker-chart vision.
+- Requires multi-timeframe agreement for qualified fused signals.
+- Adds an external M1 volatility-shock detector that forces WAIT.
+- Caps external data at 45% for real-market pairs; broker-chart analysis remains dominant.
+- Caps external data at 20% for OTC and clearly labels it REAL-MARKET CONTEXT FOR OTC.
+- Rejects stale external data after two minutes and falls back safely to visual analysis.
+- Displays external-data status in the pinned AZ information panel.
+- Preserves Verified Range, automatic learning, model validation, quarantine/rollback and signed app updates.
+
+External public prices do not reproduce broker-generated OTC candles and cannot guarantee a winning trade.
