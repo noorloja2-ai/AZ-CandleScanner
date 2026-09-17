@@ -607,7 +607,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 if(quick!=null && quick.highChance && verified.highVerified()){
                     boolean qb="BUY".equals(quick.label);
                     showQuickSignalCard(quick,horizon);
-                    String verifiedLabel=verified.tier>=3?"STRONG VERIFIED":"HIGH VERIFIED";
+                    String verifiedLabel=confidenceTitle(quick.score);
                     lastLiveStatus=verifiedLabel+" "+quick.label+" "+quick.score+"% • "+quick.reason;
                     liveText.setText(verifiedLabel+" "+quick.label+" "+quick.score+"% • "+tradeDuration(horizon)+
                             " • "+quick.confirmations+"/6 • STABLE "+quick.stableScans+
@@ -876,7 +876,6 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         infoDetails.setText(
                 "Chart: "+currentAsset()+" • M"+horizon+"\n"+
                 "Recommended trade: "+tradeDuration(horizon)+"\n\n"+
-                "External AI: "+externalStatus+"\n"+
                 live+"\n"+
                 finalSignal+"\n"+
                 entryState(now,predictionTargetStartMs)+"\n"+
@@ -922,7 +921,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         card.setBackground(bg);
 
         TextView title=new TextView(this);
-        title.setText((verified.tier>=3?"STRONG VERIFIED • ":"HIGH VERIFIED • ")+quick.label+" "+quick.score+"%");
+        title.setText(confidenceTitle(quick.score)+" • "+quick.label+" "+quick.score+"%");
         title.setTextSize(20); title.setTypeface(null,Typeface.BOLD); title.setTextColor(color);
         card.addView(title);
 
@@ -987,7 +986,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         String signalTime=clock(predictionTargetStartMs);
         int pct="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
         OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
-        title.setText((verified.tier>=3?"STRONG VERIFIED":"HIGH VERIFIED")+" • "+r.label+"  "+pct+"%");
+        title.setText(confidenceTitle(pct)+" • "+r.label+"  "+pct+"%");
         title.setTextSize(22);
         title.setTypeface(null,Typeface.BOLD);
         title.setTextColor(c);
@@ -1076,7 +1075,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 r.label+" ENTRY "+clock(predictionTargetStartMs)+" • "+entryState(now,predictionTargetStartMs)+"\n"+
                 "SETUP: "+shortSetup(r)+(pressureLine(r).isEmpty()?"":"\n"+pressureLine(r))+"\n"+verified.summary()+"\n"+wr;
         n.setSmallIcon(icon)
-                .setContentTitle(r.label+" "+pct+"% • ENTRY "+clock(predictionTargetStartMs))
+                .setContentTitle(confidenceTitle(pct)+" • "+r.label+" "+pct+"%")
                 .setContentText(currentAsset()+" • M"+horizon+" • "+wr)
                 .setStyle(new Notification.BigTextStyle().bigText(fullInfo))
                 .setAutoCancel(false)
@@ -1094,6 +1093,13 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private String tradeDuration(int horizon){
         int minutes=Math.max(1,Math.min(5,horizon));
         return (minutes*60)+"s";
+    }
+
+    private String confidenceTitle(int score){
+        if(score>=90)return "VERY HIGH CONFIDENCE";
+        if(score>=85)return "HIGH CHANCE";
+        if(score>=70)return "MEDIUM CHANCE";
+        return "LOW CONFIDENCE";
     }
 
     public static void showLastSignalOverlay(){

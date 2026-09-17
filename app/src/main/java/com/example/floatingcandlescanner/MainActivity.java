@@ -15,7 +15,6 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     SharedPreferences prefs;
     TextView status,cropText,sensText,learnText,autoSymbolText;
-    EditText marketKeyInput;
     OnlineLearner learner;
     AppUpdateManager updateManager;
     boolean pendingAccessibilityStart=false;
@@ -52,13 +51,13 @@ public class MainActivity extends Activity {
         brand.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(brand);
 
-        TextView title=tx("BUY / SELL Entry Signal v15.9 WEB AI FUSION",22,Color.WHITE);
+        TextView title=tx("BUY / SELL Entry Signal v16.0",22,Color.WHITE);
         title.setTypeface(null,1);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(title);
 
         TextView d=tx(
-                "v15.9 Web AI Fusion: AZ combines broker-chart vision with optional live M1/M5/M15 public OHLC, blocks volatility shocks and uses public prices only as limited context for OTC. Automatic validated model control and Verified Range remain active. No automatic trading.",
+                "v16.0: AZ analyzes the visible broker chart, keeps automatic validated model control and Verified Range active, and shows clearer confidence titles. No automatic trading.",
                 14,Color.rgb(148,163,184));
         d.setPadding(0,dp(8),0,dp(16));
         root.addView(d);
@@ -282,44 +281,6 @@ public class MainActivity extends Activity {
         refreshNote.setPadding(0,0,0,dp(8));
         root.addView(refreshNote);
 
-
-        TextView dataTitle=tx("External Web AI Data Fusion",18,Color.WHITE);
-        dataTitle.setTypeface(null,1);
-        dataTitle.setPadding(0,dp(12),0,0);
-        root.addView(dataTitle);
-
-        marketKeyInput=new EditText(this);
-        marketKeyInput.setSingleLine(true);
-        marketKeyInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
-                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        marketKeyInput.setTextColor(Color.WHITE);
-        marketKeyInput.setHintTextColor(Color.LTGRAY);
-        marketKeyInput.setHint("Twelve Data API key (session only)");
-        root.addView(marketKeyInput,new LinearLayout.LayoutParams(-1,dp(52)));
-
-        Button setMarketKey=btn("Use Live OHLC Key");
-        setMarketKey.setOnClickListener(v->{
-            RuntimeSecrets.setMarketDataKey(marketKeyInput.getText().toString());
-            marketKeyInput.setText("");
-            status.setText(RuntimeSecrets.getMarketDataKey().isEmpty()
-                    ?"Live OHLC key not set — visual AI only."
-                    :"Live OHLC fusion ready. API key stays only in app memory.");
-        });
-        root.addView(setMarketKey);
-
-        Button clearMarketKey=btn("Clear Live OHLC Key");
-        clearMarketKey.setOnClickListener(v->{
-            RuntimeSecrets.clear();
-            marketKeyInput.setText("");
-            status.setText("Live OHLC key cleared — visual AI only.");
-        });
-        root.addView(clearMarketKey);
-
-        TextView webDataNote=tx(
-                "Optional: AZ downloads real-market M1/M5/M15 OHLC from Twelve Data and checks EMA, RSI, MACD, ADX, ATR, support/resistance and volatility shocks. Public data can confirm real pairs. For OTC it is limited to 20% context because broker OTC candles may differ. The key stays only in memory.",
-                12,Color.rgb(125,211,252));
-        webDataNote.setPadding(0,0,0,dp(8));
-        root.addView(webDataNote);
 
         TextView sessionLabel=tx("Trading session filter",14,Color.WHITE);
         root.addView(sessionLabel);
@@ -590,10 +551,6 @@ public class MainActivity extends Activity {
         if(Build.VERSION.SDK_INT<30){
             status.setText("Visual candle scanning without screen sharing requires Android 11 or newer.");
             return;
-        }
-        if(marketKeyInput!=null && !marketKeyInput.getText().toString().trim().isEmpty()){
-            RuntimeSecrets.setMarketDataKey(marketKeyInput.getText().toString());
-            marketKeyInput.setText("");
         }
         if(!AutoSymbolAccessibilityService.isConnected()){
             pendingAccessibilityStart=true;

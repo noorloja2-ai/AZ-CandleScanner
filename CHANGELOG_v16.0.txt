@@ -1,0 +1,10 @@
+AZ CandleScanner v16.0 — Clear Confidence Titles
+
+- Removes the External Web AI API setting and API-key controls.
+- Uses VERY HIGH CONFIDENCE for scores from 90% to 100%.
+- Uses HIGH CHANCE for scores from 85% to 89%.
+- Uses MEDIUM CHANCE for scores from 70% to 84%.
+- Keeps the existing black notification/card design and all other signal information unchanged.
+- Keeps validated-learning gates, broker-board learning and manual trade execution unchanged.
+
+Confidence is a model score, not a guaranteed win rate.

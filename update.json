@@ -1,6 +1,6 @@
 {
-  "version": "15.9",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v15.9/CandleScanner_v15.9.apk",
-  "apkName": "CandleScanner_v15.9.apk",
-  "notes": "Web AI Fusion. Connects optional Twelve Data M1/M5/M15 OHLC to the decision engine, adds volatility-shock blocking and limits external OTC context to 20%. AI Control and Verified Range remain active."
+  "version": "16.0",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.0/CandleScanner_v16.0.apk",
+  "apkName": "CandleScanner_v16.0.apk",
+  "notes": "Removed the External AI API setting. Notification titles now show VERY HIGH CONFIDENCE at 90–100%, HIGH CHANCE at 85–89%, and MEDIUM CHANCE at 70–84%. All other notification information is unchanged."
 }
