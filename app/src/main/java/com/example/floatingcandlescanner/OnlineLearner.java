@@ -10,6 +10,9 @@ import java.util.Locale;
  * Stored locally on device.
  */
 public class OnlineLearner {
+    public static final double BREAK_EVEN_92 = 1.0 / 1.92;
+    private static final int VERIFIED_MIN_SAMPLES = 200;
+    private static final int VERIFIED_MIN_RECENT = 50;
     private static final String PREF = "online_learner_v4";
     private final Context context;
     private final SharedPreferences p;
@@ -111,6 +114,71 @@ public class OnlineLearner {
 
     public int recentCount(int horizon) {
         return p.getString(k("recent", horizon), "").length();
+    }
+
+    /**
+     * Conservative evidence range for user-facing alert labels.
+     *
+     * Model percentages are scores, not measured win probabilities.  Alerts use
+     * the 95% Wilson lower bound of resolved, asset/timeframe-specific outcomes.
+     * This prevents a short lucky streak from being displayed as HIGH CHANCE.
+     */
+    public synchronized Verification verification(int horizon) {
+        int w = wins(horizon), l = losses(horizon), n = w + l;
+        String recent = p.getString(k("recent", horizon), "");
+        int rw = 0;
+        for (int i=0;i<recent.length();i++) if (recent.charAt(i)=='1') rw++;
+        int rn = recent.length();
+        double allRate = n == 0 ? 0.0 : (double) w / n;
+        double recentRate = rn == 0 ? 0.0 : (double) rw / rn;
+        double lower = wilsonLower(w, n, 1.959963984540054);
+
+        int tier = 0;
+        String status;
+        if (n < VERIFIED_MIN_SAMPLES || rn < VERIFIED_MIN_RECENT) {
+            status = "UNVERIFIED";
+        } else if (recentRate < .55 || lower <= BREAK_EVEN_92) {
+            status = "NO TRADE";
+        } else if (lower < .58 || recentRate < .60) {
+            tier = 1;
+            status = "POSSIBLE";
+        } else if (n >= 300 && lower >= .60 && recentRate >= .65) {
+            tier = 3;
+            status = "STRONG VERIFIED";
+        } else {
+            tier = 2;
+            status = "HIGH VERIFIED";
+        }
+        return new Verification(n, rn, allRate, recentRate, lower, tier, status);
+    }
+
+    public static final class Verification {
+        public final int samples, recentSamples, tier;
+        public final double winRate, recentWinRate, lower95;
+        public final String status;
+        Verification(int samples, int recentSamples, double winRate,
+                     double recentWinRate, double lower95, int tier, String status) {
+            this.samples=samples; this.recentSamples=recentSamples;
+            this.winRate=winRate; this.recentWinRate=recentWinRate;
+            this.lower95=lower95; this.tier=tier; this.status=status;
+        }
+        public boolean highVerified() { return tier >= 2; }
+        public String summary() {
+            if (samples < VERIFIED_MIN_SAMPLES || recentSamples < VERIFIED_MIN_RECENT)
+                return status+" • "+samples+"/"+VERIFIED_MIN_SAMPLES+" resolved";
+            return String.format(Locale.US,
+                    "%s • 95%% lower %.1f%% • recent %.0f%% (%d)",
+                    status, lower95*100.0, recentWinRate*100.0, recentSamples);
+        }
+    }
+
+    static double wilsonLower(int wins, int samples, double z) {
+        if (samples <= 0) return 0.0;
+        double n = samples, phat = clamp((double) wins / n, 0.0, 1.0);
+        double z2 = z*z;
+        double centre = phat + z2/(2.0*n);
+        double margin = z*Math.sqrt((phat*(1.0-phat)+z2/(4.0*n))/n);
+        return clamp((centre-margin)/(1.0+z2/n), 0.0, 1.0);
     }
 
     public boolean recentPerformanceHealthy(int horizon) {
