@@ -26,7 +26,7 @@ public final class HybridPredictionEngine {
     public static Fusion fuse(SignalResult[] visual,TechnicalModel.Multi t,
                               boolean highAccuracy,boolean eliteMode,int sensitivity,
                               String session,long newsLockUntil,
-                              OnlineLearner learner){
+                              OnlineLearner learner,double externalWeight,String externalLabel){
         SignalResult[] out=new SignalResult[5];
 
         boolean sessionOk=sessionOpen(session);
@@ -43,8 +43,10 @@ public final class HybridPredictionEngine {
                 tech=.25*t.m1.buyProbability+.45*t.m5.buyProbability+.30*t.m15.buyProbability;
             }
 
-            // Exact OHLC gets slightly more weight than screen pixels.
-            double buy=.43*visualBuy+.57*tech;
+            // Public OHLC confirms the broker chart but never dominates it.
+            // OTC uses a smaller weight because broker-generated candles can differ.
+            double webWeight=clamp(externalWeight,.10,.45);
+            double buy=(1.0-webWeight)*visualBuy+webWeight*tech;
             buy=clamp(buy,.08,.92);
             double sell=1-buy;
 
@@ -78,6 +80,7 @@ public final class HybridPredictionEngine {
 
             if(!sessionOk) block="Selected trading session is closed.";
             else if(!newsOk) block="Manual high-impact news lock is active.";
+            else if(t.m1.volatilityShock) block="External M1 volatility shock: wait for normalization.";
             else if(eliteMode && !eliteReady) block="ELITE learning gate: 40 resolved samples and 25 recent outcomes are required.";
             else if(eliteMode && !eliteHealthy) block="ELITE performance gate: recent learned direction score must be at least 68%.";
             else if(eliteMode && !fourOfFour) block="ELITE requires 4-of-4 agreement: visual + M1 + M5 + M15.";
@@ -120,8 +123,8 @@ public final class HybridPredictionEngine {
                     buy-sell,
                     buyPct,sellPct,confidence,regime,buy,
                     quality,
-                    v.structure+" • M5 "+t.m5.direction+" • M15 "+t.m15.direction,
-                    explanation);
+                    v.structure+" • WEB "+externalLabel+" • M5 "+t.m5.direction+" • M15 "+t.m15.direction,
+                    explanation+" External web weight "+Math.round(webWeight*100)+"%.");
         }
 
         String status=eliteMode?"LIVE OHLC • ELITE PRECISION":"LIVE OHLC FUSION ACTIVE";
