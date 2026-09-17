@@ -1,6 +1,6 @@
 {
-  "version": "15.7",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v15.7/CandleScanner_v15.7.apk",
-  "apkName": "CandleScanner_v15.7.apk",
-  "notes": "Verified Range Edition. Strong alerts now require at least 200 resolved asset/timeframe outcomes, 50 recent outcomes and a conservative 95% lower-bound performance gate. Broker-board WAIT promotion also requires statistically verified history."
+  "version": "15.8",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v15.8/CandleScanner_v15.8.apk",
+  "apkName": "CandleScanner_v15.8.apk",
+  "notes": "AI Control Edition. AZ automatically validates versioned AI models, limits remote influence, monitors eligible resolved outcomes and quarantines or rolls back a harmful model. Verified Range protections remain active."
 }
