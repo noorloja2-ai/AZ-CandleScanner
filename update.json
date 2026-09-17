@@ -1,6 +1,6 @@
 {
-  "version": "15.6",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v15.6/CandleScanner_v15.6.apk",
-  "apkName": "CandleScanner_v15.6.apk",
-  "notes": "New 3D cyber AZ logo with animated pulse. Single press refreshes; long press opens detailed information until CLOSE. Adds 12-method M1 confluence while preserving v15.5 live information and learning."
+  "version": "15.7",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v15.7/CandleScanner_v15.7.apk",
+  "apkName": "CandleScanner_v15.7.apk",
+  "notes": "Verified Range Edition. Strong alerts now require at least 200 resolved asset/timeframe outcomes, 50 recent outcomes and a conservative 95% lower-bound performance gate. Broker-board WAIT promotion also requires statistically verified history."
 }
