@@ -37,6 +37,9 @@ public final class CommunityLearningSync {
     private static final long MODEL_REFRESH_MS = 15L * 60L * 1000L;
     private static final long UPLOAD_RETRY_MS = 60L * 1000L;
     private static final int UPLOAD_BATCH_TRIGGER = 10;
+    private static final int MAX_MODEL_BYTES = 1_000_000;
+    private static final int MODEL_HEALTH_WINDOW = 50;
+    private static final int MODEL_HEALTH_MIN = 30;
     private static final Object LOCK = new Object();
     private static boolean syncRunning = false;
 
@@ -82,6 +85,7 @@ public final class CommunityLearningSync {
                 int start = Math.max(0, q.length() - MAX_QUEUE);
                 for (int i = start; i < q.length(); i++) trimmed.put(q.get(i));
                 prefs.edit().putString("queue", trimmed.toString()).apply();
+                recordActiveModelOutcome(prefs, p, correct);
             } catch (Exception ignored) {}
         }
         refreshAndFlushAsync(app);
@@ -145,9 +149,20 @@ public final class CommunityLearningSync {
         if (url == null || !url.toLowerCase(Locale.US).startsWith("https://")) return;
         try {
             String body = httpGet(url, 9000);
+            if (body.getBytes(StandardCharsets.UTF_8).length > MAX_MODEL_BYTES)
+                throw new Exception("model is too large");
             JSONObject model = new JSONObject(body);
-            if (model.optInt("schema", 0) != 1) throw new Exception("unsupported model schema");
-            p.edit().putString("model_json", model.toString())
+            validateModel(model);
+            String nextVersion=model.optString("version",model.optString("generated_at","legacy")).trim();
+            String oldVersion=p.getString("model_version","");
+            SharedPreferences.Editor edit=p.edit();
+            if(!oldVersion.isEmpty() && !oldVersion.equals(nextVersion)){
+                edit.putString("previous_model_json",p.getString("model_json",""));
+                edit.putString("previous_model_version",oldVersion);
+                edit.remove("model_health_recent").remove("quarantined_model_version");
+            }
+            edit.putString("model_json", model.toString())
+                    .putString("model_version",nextVersion)
                     .putLong("model_updated_at", System.currentTimeMillis())
                     .putLong("model_checked_at", System.currentTimeMillis())
                     .remove("last_error").apply();
@@ -214,6 +229,9 @@ public final class CommunityLearningSync {
                     .getString("model_json", "");
             if (text == null || text.isEmpty()) return localP;
             JSONObject model = new JSONObject(text);
+            String version=model.optString("version",model.optString("generated_at","legacy"));
+            SharedPreferences prefs=context.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+            if(version.equals(prefs.getString("quarantined_model_version","")))return localP;
             JSONObject assets = model.optJSONObject("assets");
             if (assets == null) return localP;
             String key = safeAsset(asset);
@@ -223,12 +241,14 @@ public final class CommunityLearningSync {
             JSONObject tf = a.optJSONObject("M" + (horizon + 1));
             if (tf == null) return localP;
             int samples = tf.optInt("samples", 0);
-            if (samples < 50) return localP;
+            double lower95=tf.optDouble("lower_95",0.0);
+            if (samples < 200 || lower95 < OnlineLearner.BREAK_EVEN_92) return localP;
             double bias = clamp(tf.optDouble("bias", 0.0), -0.60, 0.60);
             double scale = clamp(tf.optDouble("scale", 1.0), 0.70, 1.35);
             double communityP = sigmoid(scale * logit(rawP) + bias);
             // Community data is useful but never allowed to dominate this phone's model.
-            double weight = Math.min(0.25, 0.25 * samples / 800.0);
+            double requestedWeight=clamp(model.optDouble("max_weight",0.20),0.05,0.20);
+            double weight = Math.min(requestedWeight, requestedWeight * samples / 800.0);
             return clamp(localP * (1.0 - weight) + communityP * weight, 0.10, 0.90);
         } catch (Exception ignored) {
             return localP;
@@ -254,6 +274,9 @@ public final class CommunityLearningSync {
         else s.append(" • upload+download active");
         s.append(" • pending ").append(pending);
         if (model > 0) s.append(" • shared model loaded");
+        String version=p.getString("model_version","");
+        if(!version.isEmpty())s.append(" • AI ").append(version);
+        if(version.equals(p.getString("quarantined_model_version","")))s.append(" QUARANTINED/ROLLED BACK");
         if (upload > 0) s.append(" • uploaded before");
         return s.toString();
     }
@@ -274,6 +297,70 @@ public final class CommunityLearningSync {
             }
             return b.toString();
         } finally { if (c != null) c.disconnect(); }
+    }
+
+    private static void validateModel(JSONObject model) throws Exception {
+        int schema=model.optInt("schema",0);
+        if(schema!=1 && schema!=2)throw new Exception("unsupported model schema");
+        JSONObject assets=model.optJSONObject("assets");
+        if(assets==null)throw new Exception("model assets missing");
+        if(assets.length()>1000)throw new Exception("too many model assets");
+        java.util.Iterator<String> ai=assets.keys();
+        while(ai.hasNext()){
+            JSONObject asset=assets.optJSONObject(ai.next());
+            if(asset==null)throw new Exception("invalid asset model");
+            java.util.Iterator<String> ti=asset.keys();
+            while(ti.hasNext()){
+                JSONObject tf=asset.optJSONObject(ti.next());
+                if(tf==null)throw new Exception("invalid timeframe model");
+                int samples=tf.optInt("samples",0);
+                double bias=tf.optDouble("bias",Double.NaN);
+                double scale=tf.optDouble("scale",Double.NaN);
+                double lower=tf.optDouble("lower_95",Double.NaN);
+                if(samples<0 || samples>10_000_000 || Double.isNaN(bias) || Math.abs(bias)>.60 ||
+                        Double.isNaN(scale) || scale<.70 || scale>1.35 ||
+                        Double.isNaN(lower) || lower<0 || lower>1)
+                    throw new Exception("unsafe model values");
+            }
+        }
+    }
+
+    /** Monitor only outcomes for which the downloaded model was eligible to contribute. */
+    private static void recordActiveModelOutcome(SharedPreferences prefs,
+                                                  TrainingStore.Pending sample,
+                                                  boolean correct) {
+        try{
+            String text=prefs.getString("model_json","");
+            if(text.isEmpty())return;
+            JSONObject model=new JSONObject(text);
+            String version=model.optString("version",model.optString("generated_at","legacy"));
+            if(version.isEmpty() || version.equals(prefs.getString("quarantined_model_version","")))return;
+            JSONObject assets=model.optJSONObject("assets");
+            if(assets==null)return;
+            JSONObject a=assets.optJSONObject(safeAsset(sample.asset));
+            if(a==null)a=assets.optJSONObject("GLOBAL");
+            if(a==null)return;
+            JSONObject tf=a.optJSONObject("M"+(sample.horizon+1));
+            if(tf==null || tf.optInt("samples",0)<200 ||
+                    tf.optDouble("lower_95",0.0)<OnlineLearner.BREAK_EVEN_92)return;
+
+            String recent=prefs.getString("model_health_recent","")+(correct?"1":"0");
+            if(recent.length()>MODEL_HEALTH_WINDOW)
+                recent=recent.substring(recent.length()-MODEL_HEALTH_WINDOW);
+            int wins=0;
+            for(int i=0;i<recent.length();i++)if(recent.charAt(i)=='1')wins++;
+            SharedPreferences.Editor e=prefs.edit().putString("model_health_recent",recent);
+            if(recent.length()>=MODEL_HEALTH_MIN && (double)wins/recent.length()<.50){
+                e.putString("quarantined_model_version",version)
+                        .putString("last_error","AI model auto-rollback: recent verified performance fell below 50%");
+                String previous=prefs.getString("previous_model_json","");
+                String previousVersion=prefs.getString("previous_model_version","");
+                if(!previous.isEmpty() && !previousVersion.isEmpty()){
+                    e.putString("model_json",previous).putString("model_version",previousVersion);
+                }
+            }
+            e.apply();
+        }catch(Exception ignored){}
     }
 
     private static void httpPostJson(String url, String body, int timeout) throws Exception {
