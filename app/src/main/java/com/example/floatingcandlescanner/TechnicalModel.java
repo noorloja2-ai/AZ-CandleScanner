@@ -16,17 +16,22 @@ public final class TechnicalModel {
         public final double adx;
         public final double macdHist;
         public final double atr;
+        public final double volatilityRatio;
+        public final boolean volatilityShock;
         public final String direction;
         public final String summary;
 
         Frame(String interval, double buyProbability, double rsi, double adx,
-              double macdHist, double atr, String direction, String summary) {
+              double macdHist, double atr, double volatilityRatio, boolean volatilityShock,
+              String direction, String summary) {
             this.interval = interval;
             this.buyProbability = buyProbability;
             this.rsi = rsi;
             this.adx = adx;
             this.macdHist = macdHist;
             this.atr = atr;
+            this.volatilityRatio = volatilityRatio;
+            this.volatilityShock = volatilityShock;
             this.direction = direction;
             this.summary = summary;
         }
@@ -71,6 +76,10 @@ public final class TechnicalModel {
         double macdHist=macdLine[n-1]-macdSignal[n-1];
 
         double atr=atr(high,low,close,14);
+        double latestTrueRange=Math.max(high[n-1]-low[n-1],
+                Math.max(Math.abs(high[n-1]-close[n-2]),Math.abs(low[n-1]-close[n-2])));
+        double volatilityRatio=latestTrueRange/Math.max(atr,1e-12);
+        boolean volatilityShock=volatilityRatio>2.60;
         double adx=adx(high,low,close,14);
 
         double last=close[n-1];
@@ -161,11 +170,13 @@ public final class TechnicalModel {
         String cross=bullCross?"XUP":bearCross?"XDN":"-";
         String fibTag=fib>.20?"FIB+":fib<-.20?"FIB-":"";
         String summary=String.format(Locale.US,
-                "%s RSI %.1f • ADX %.1f • MACD %s • EMA %s %s %s",
+                "%s RSI %.1f • ADX %.1f • MACD %s • EMA %s %s %s%s",
                 interval,rsi,adx,macdHist>=0?"+":"-",
-                e9[n-1]>e21[n-1]?"UP":"DOWN",cross,fibTag).trim();
+                e9[n-1]>e21[n-1]?"UP":"DOWN",cross,fibTag,
+                volatilityShock?" • VOLATILITY SHOCK":"").trim();
 
-        return new Frame(interval,buy,rsi,adx,macdHist,atr,direction,summary);
+        return new Frame(interval,buy,rsi,adx,macdHist,atr,volatilityRatio,
+                volatilityShock,direction,summary);
     }
 
 
