@@ -1,0 +1,11 @@
+AZ CandleScanner v15.7 — Verified Range Edition
+
+- Adds a conservative 95% Wilson lower-bound check to resolved local outcomes.
+- HIGH VERIFIED requires at least 200 resolved outcomes for the same asset/timeframe, all 50 recent outcomes, at least 60% recent accuracy and a 58% conservative lower bound.
+- STRONG VERIFIED requires at least 300 resolved outcomes, at least 65% recent accuracy and a 60% conservative lower bound.
+- Unproven model scores remain visible for learning, but cannot trigger strong popups, sound or persistent trade notifications.
+- Broker-board history can promote WAIT only after 60 matching examples whose directional 95% lower bound reaches 55%.
+- Learning status now shows UNVERIFIED, NO TRADE, POSSIBLE, HIGH VERIFIED or STRONG VERIFIED with evidence details.
+- Preserves automatic local learning, protected community sync, cyber AZ overlay, pinned information card and in-app updates.
+
+Important: verified historical performance is not a guarantee of a future win. OTC/binary trades remain high risk.
