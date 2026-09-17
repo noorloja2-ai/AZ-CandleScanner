@@ -1,0 +1,16 @@
+name = "az-learning-gateway"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[triggers]
+crons = ["17 2 * * *"]
+
+[[d1_databases]]
+binding = "AZ_LEARNING_DB"
+database_name = "az-learning"
+database_id = "REPLACE_AFTER_D1_CREATE"
+
+[vars]
+GITHUB_REPOSITORY = "noorloja2-ai/AZ-CandleScanner"
+GITHUB_MODEL_PATH = "community-model.json"
+ALLOWED_APP = "CandleScanner"
