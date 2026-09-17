@@ -52,13 +52,13 @@ public class MainActivity extends Activity {
         brand.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(brand);
 
-        TextView title=tx("BUY / SELL Entry Signal v15.3 FULL NOTIFICATION INFORMATION",22,Color.WHITE);
+        TextView title=tx("BUY / SELL Entry Signal v15.7 VERIFIED RANGE",22,Color.WHITE);
         title.setTypeface(null,1);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(title);
 
         TextView d=tx(
-                "v15.3 Full Notification Information Edition: tap the floating AZ logo to scan immediately and open a closable information popup showing the chart, timeframe, duration and scanner status. HIGH CHANCE and MOST SURE signals still appear automatically. Screenshots and broker credentials are never stored; no automatic trading.",
+                "v15.7 Verified Range Edition: model scores remain visible, but HIGH VERIFIED and STRONG VERIFIED alerts require at least 200 resolved asset/timeframe outcomes plus a conservative 95% lower-bound performance check. Screenshots and broker credentials are never stored; no automatic trading.",
                 14,Color.rgb(148,163,184));
         d.setPadding(0,dp(8),0,dp(16));
         root.addView(d);
@@ -544,6 +544,7 @@ public class MainActivity extends Activity {
                     .append(learner.recentAccuracyPct(i)).append("% recent");
             String bestSetup=learner.bestSetup(i);
             if(!bestSetup.isEmpty())s.append(" • best setup: ").append(bestSetup);
+            s.append("\n  ").append(learner.verification(i).summary());
             if(i<4)s.append("\n");
         }
         if(all<150)s.append("\n\nAutomatic learning is still building calibration.");
