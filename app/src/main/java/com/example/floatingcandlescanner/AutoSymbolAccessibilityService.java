@@ -44,6 +44,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
 
     private static final String PREFS="scanner";
     private static final String SIGNAL_CH="trade_signal_sound_v122";
+    private static final String SIGNAL_POPUP_CH="trade_signal_popup_v161";
     private static final int SIGNAL_ID=5501;
     private static final long POST_CLOSE_SCAN_DELAY_MS=650L;
     private static final long ENTRY_WINDOW_MS=5_000L;
@@ -668,14 +669,10 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
 
     private void showStrongSignal(SignalResult r,int horizon){
         main.post(()->{
-            if(!scannerEnabled())return;
-            OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
-            if(!verified.highVerified()){
+            if(!scannerEnabled()||r==null)return;
+            int pct="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
+            if(pct<70){
                 clearStrongSignalCard();
-                if(statusText!=null){
-                    statusText.setText("SIGNAL NOT VERIFIED\n"+verified.summary());
-                    statusText.setTextColor(Color.rgb(251,191,36));
-                }
                 return;
             }
             int c="BUY".equals(r.label)?Color.rgb(134,239,172):Color.rgb(252,165,165);
@@ -1034,17 +1031,16 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
 
     private void maybeNotify(SignalResult r,int horizon){
         if(r==null || !("BUY".equals(r.label)||"SELL".equals(r.label)))return;
-        OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
-        if(!verified.highVerified())return;
-
-        // A strong model signal is not a guaranteed trade. Sound is deliberately
-        // reserved for a user-configurable high-confidence subset so normal
-        // candle-by-candle analysis remains quiet.
         int pct="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
+        if(pct<70)return;
+        OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
+
+        // Every completed-candle BUY/SELL signal at 70%+ gets a visible popup.
+        // Sound remains independently controlled by the user's sound threshold.
         int alertThreshold=Math.max(75,Math.min(90,
                 prefs==null?85:prefs.getInt("sound_alert_threshold",85)));
         boolean soundEnabled=prefs==null || prefs.getBoolean("sound_alerts",true);
-        if(!soundEnabled || pct<alertThreshold)return;
+        boolean playSound=soundEnabled && pct>=alertThreshold;
 
         long now=System.currentTimeMillis();
         long candleKey=predictionTargetStartMs>0L?predictionTargetStartMs:(now/60_000L)*60_000L;
@@ -1067,7 +1063,8 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
 
         int icon="BUY".equals(r.label)?android.R.drawable.arrow_up_float:android.R.drawable.arrow_down_float;
         Notification.Builder n=Build.VERSION.SDK_INT>=26
-                ?new Notification.Builder(this,SIGNAL_CH):new Notification.Builder(this);
+                ?new Notification.Builder(this,playSound?SIGNAL_CH:SIGNAL_POPUP_CH)
+                :new Notification.Builder(this);
         int hi=Math.max(0,Math.min(4,horizon-1));
         int rn=learner.recentCount(hi);
         String wr=rn<5?"WIN RATE LEARNING":("WIN RATE "+learner.recentAccuracyPct(hi)+"%");
@@ -1084,7 +1081,8 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 .setPriority(Notification.PRIORITY_HIGH)
                 .setCategory(Notification.CATEGORY_RECOMMENDATION)
                 .setOnlyAlertOnce(true)
-                .setDefaults(Build.VERSION.SDK_INT<26 ? (Notification.DEFAULT_SOUND|Notification.DEFAULT_VIBRATE) : 0)
+                .setDefaults(Build.VERSION.SDK_INT<26 && playSound
+                        ? (Notification.DEFAULT_SOUND|Notification.DEFAULT_VIBRATE) : 0)
                 .addAction(new Notification.Action.Builder(0,"OPEN",open).build())
                 .addAction(new Notification.Action.Builder(0,"CLOSE",close).build());
         getSystemService(NotificationManager.class).notify(SIGNAL_ID,n.build());
@@ -1142,7 +1140,15 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build();
             ch.setSound(sound,attrs);
-            getSystemService(NotificationManager.class).createNotificationChannel(ch);
+            NotificationManager nm=getSystemService(NotificationManager.class);
+            nm.createNotificationChannel(ch);
+
+            NotificationChannel popup=new NotificationChannel(
+                    SIGNAL_POPUP_CH,"Automatic BUY / SELL popups",NotificationManager.IMPORTANCE_HIGH);
+            popup.setDescription("Visible completed-candle BUY / SELL popups for confidence scores of 70% or higher");
+            popup.enableVibration(false);
+            popup.setSound(null,null);
+            nm.createNotificationChannel(popup);
         }
     }
 

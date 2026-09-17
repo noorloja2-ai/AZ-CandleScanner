@@ -1,6 +1,6 @@
 {
-  "version": "16.0",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.0/CandleScanner_v16.0.apk",
-  "apkName": "CandleScanner_v16.0.apk",
-  "notes": "Removed the External AI API setting. Notification titles now show VERY HIGH CONFIDENCE at 90–100%, HIGH CHANCE at 85–89%, and MEDIUM CHANCE at 70–84%. All other notification information is unchanged."
+  "version": "16.1",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.1/CandleScanner_v16.1.apk",
+  "apkName": "CandleScanner_v16.1.apk",
+  "notes": "Automatic completed-candle BUY/SELL popups now appear for confidence scores of 70% or higher. Sound remains controlled separately by the selected sound threshold. Confidence titles and all other signal information are unchanged."
 }

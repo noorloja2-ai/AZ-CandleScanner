@@ -1,0 +1,11 @@
+AZ CandleScanner v16.1 — Automatic Signal Popup Fix
+
+- Automatically displays the completed-candle BUY/SELL popup at 70% confidence or higher.
+- 90–100%: VERY HIGH CONFIDENCE.
+- 85–89%: HIGH CHANCE.
+- 70–84%: MEDIUM CHANCE.
+- Removes the learning-status gate that prevented the visual popup on new installations.
+- Keeps sound and vibration controlled separately by the selected sound threshold.
+- Keeps the existing black popup design, close button, signal details, learning and analysis logic unchanged.
+
+Confidence is a model score, not a guaranteed win rate.
