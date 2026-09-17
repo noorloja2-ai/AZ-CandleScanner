@@ -119,7 +119,7 @@ public final class BrokerBoardLearner {
         // only promoted when the matching history is both mature and decisive.
         if (!"WAIT".equals(base.label)) {
             label = buy >= sell ? "BUY" : "SELL";
-        } else if (n >= 20 && (learned >= .68 || learned <= .32) && lead >= 60) {
+        } else if (n >= 60 && boardDirectionVerified(up, dn) && lead >= 60) {
             label = buy >= sell ? "BUY" : "SELL";
         }
 
@@ -152,6 +152,16 @@ public final class BrokerBoardLearner {
     }
 
     public synchronized void clearPending() { p.edit().remove(PENDING).apply(); }
+
+    private static boolean boardDirectionVerified(int up, int down) {
+        int n=up+down;
+        if(n<60)return false;
+        boolean upLead=up>=down;
+        int directionalWins=upLead?up:down;
+        // A board bucket may promote WAIT only when its conservative 95% lower
+        // bound clears 55%; the blended model still applies the normal gates.
+        return OnlineLearner.wilsonLower(directionalWins,n,1.959963984540054)>=.55;
+    }
 
     private void record(String key, boolean up) {
         int u = p.getInt(key + "_u", 0) + (up ? 1 : 0);
