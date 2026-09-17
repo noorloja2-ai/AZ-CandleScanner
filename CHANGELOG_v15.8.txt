@@ -1,0 +1,14 @@
+AZ CandleScanner v15.8 — AI Control Edition
+
+- Downloads versioned aggregate AI calibration automatically every 15 minutes.
+- Validates model schema, size, asset count and every numeric range before activation.
+- A remote model must contain at least 200 samples and clear the 92% payout break-even lower-bound gate before it may influence a prediction.
+- Remote AI influence is capped at 20%; local completed-candle analysis remains dominant.
+- Monitors the latest 50 eligible resolved outcomes for the active downloaded model.
+- Automatically quarantines a model when at least 30 eligible outcomes fall below 50% recent accuracy.
+- Keeps the previous validated model and rolls back automatically when available.
+- Shows active AI version and quarantine/rollback state in automatic learning status.
+- Keeps v15.7 Verified Range gates for strong alerts and notifications.
+- Signed APK updates are checked automatically, but Android approval remains required for installation.
+
+AZ does not self-modify executable code, place trades, promise a win, or upload screenshots and credentials.
