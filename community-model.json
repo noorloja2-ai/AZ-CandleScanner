@@ -1,5 +1,7 @@
 {
-  "schema": 1,
-  "generated_at": "2026-09-15T22:45:00Z",
+  "schema": 2,
+  "version": "ai-control-1",
+  "generated_at": "2026-09-17T12:30:00Z",
+  "max_weight": 0.20,
   "assets": {}
 }
