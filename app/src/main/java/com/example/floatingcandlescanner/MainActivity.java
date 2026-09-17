@@ -52,13 +52,13 @@ public class MainActivity extends Activity {
         brand.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(brand);
 
-        TextView title=tx("BUY / SELL Entry Signal v15.7 VERIFIED RANGE",22,Color.WHITE);
+        TextView title=tx("BUY / SELL Entry Signal v15.8 AI CONTROL",22,Color.WHITE);
         title.setTypeface(null,1);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(title);
 
         TextView d=tx(
-                "v15.7 Verified Range Edition: model scores remain visible, but HIGH VERIFIED and STRONG VERIFIED alerts require at least 200 resolved asset/timeframe outcomes plus a conservative 95% lower-bound performance check. Screenshots and broker credentials are never stored; no automatic trading.",
+                "v15.8 AI Control Edition: AZ analyses resolved outcomes, downloads validated model updates automatically, monitors their live performance and quarantines or rolls back a harmful model. Signed APK installation still requires your Android approval. No automatic trading.",
                 14,Color.rgb(148,163,184));
         d.setPadding(0,dp(8),0,dp(16));
         root.addView(d);
@@ -391,13 +391,13 @@ public class MainActivity extends Activity {
                 }).show());
         root.addView(reset);
 
-        TextView communityTitle=tx("Automatic GitHub shared learning",18,Color.WHITE);
+        TextView communityTitle=tx("Automatic AZ AI control",18,Color.WHITE);
         communityTitle.setTypeface(null,1);
         communityTitle.setPadding(0,dp(12),0,0);
         root.addView(communityTitle);
 
         TextView communityNote=tx(
-                "Always on. The app automatically queues resolved numeric learning, sends it only to the protected community gateway when configured, and downloads the latest validated aggregate model from GitHub. Other users receive new shared calibration automatically without installing a new APK. No screenshots, login details, Android identifiers or GitHub write token are sent.",
+                "Always on. AZ converts completed outcomes into anonymous numeric learning, downloads versioned AI models, validates every value, limits remote influence to 20%, monitors the latest 50 eligible results and automatically quarantines or rolls back a model if performance becomes harmful. No screenshots, credentials, Android identifiers or GitHub write token are sent.",
                 12,Color.rgb(251,191,36));
         communityNote.setPadding(0,0,0,dp(6));
         root.addView(communityNote);
