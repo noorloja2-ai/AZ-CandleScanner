@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
  *
  * Android 11+ Accessibility screenshots are analyzed in memory. A small
  * TYPE_ACCESSIBILITY_OVERLAY AZ logo stays above the broker. Signal details
- * appear only for qualified HIGH CHANCE setups. The service never stores screenshots or credentials.
+ * appear only for statistically verified setups. The service never stores screenshots or credentials.
  */
 public class AutoSymbolAccessibilityService extends AccessibilityService {
     private static final String CCY = "EUR|GBP|USD|JPY|CHF|AUD|NZD|CAD|SGD|HKD|CNH|CNY|INR|BRL|MXN|ZAR|TRY|SEK|NOK|DKK|PLN|HUF|CZK|AED|SAR";
@@ -540,20 +540,22 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             lastLivePercent=pct;
             if(liveText!=null){
                 int learned=boardLearner==null?0:boardLearner.totalSamples();
-                if(quick!=null && quick.highChance){
+                OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
+                if(quick!=null && quick.highChance && verified.highVerified()){
                     boolean qb="BUY".equals(quick.label);
                     showQuickSignalCard(quick,horizon);
-                    lastLiveStatus="HIGH CHANCE "+quick.label+" "+quick.score+"% • "+quick.reason;
-                    liveText.setText("HIGH CHANCE "+quick.label+" "+quick.score+"% • "+tradeDuration(horizon)+
+                    String verifiedLabel=verified.tier>=3?"STRONG VERIFIED":"HIGH VERIFIED";
+                    lastLiveStatus=verifiedLabel+" "+quick.label+" "+quick.score+"% • "+quick.reason;
+                    liveText.setText(verifiedLabel+" "+quick.label+" "+quick.score+"% • "+tradeDuration(horizon)+
                             " • "+quick.confirmations+"/6 • STABLE "+quick.stableScans+
                             (prefs.getBoolean("broker_board_learning",true)?" • BOARD "+learned:""));
                     liveText.setTextColor(qb?Color.rgb(74,222,128):Color.rgb(248,113,113));
                     if(statusText!=null){
-                        statusText.setText("HIGH CHANCE "+quick.label+" • TRADE "+tradeDuration(horizon)+"\n"+quick.reason);
+                        statusText.setText(verifiedLabel+" "+quick.label+" • TRADE "+tradeDuration(horizon)+"\n"+verified.summary());
                         statusText.setTextColor(qb?Color.rgb(134,239,172):Color.rgb(252,165,165));
                     }
                 }else{
-                    String q=quick==null?"":(" • NO TRADE "+quick.confirmations+"/6");
+                    String q=quick==null?"":(" • "+(quick.highChance?verified.status:"NO TRADE")+" "+quick.confirmations+"/6");
                     lastLiveStatus="AI LIVE • "+lastLiveDirection+" "+pct+"% • M"+horizon+q;
                     liveText.setText("AI LIVE 1s • "+(buy?"BUY ":"SELL ")+pct+"% • M"+horizon+q+
                             (prefs.getBoolean("broker_board_learning",true)?" • BOARD "+learned:""));
@@ -604,6 +606,15 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private void showStrongSignal(SignalResult r,int horizon){
         main.post(()->{
             if(!scannerEnabled())return;
+            OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
+            if(!verified.highVerified()){
+                clearStrongSignalCard();
+                if(statusText!=null){
+                    statusText.setText("SIGNAL NOT VERIFIED\n"+verified.summary());
+                    statusText.setTextColor(Color.rgb(251,191,36));
+                }
+                return;
+            }
             int c="BUY".equals(r.label)?Color.rgb(134,239,172):Color.rgb(252,165,165);
             showSignalCard(r,horizon,c);
             maybeNotify(r,horizon);
@@ -835,7 +846,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         }
         boolean buy="BUY".equals(quick.label);
         int color=buy?Color.rgb(74,222,128):Color.rgb(248,113,113);
-        boolean mostSure=quick.score>=88 && quick.confirmations>=5 && quick.stableScans>=4;
+        OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
 
         LinearLayout card=new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -847,13 +858,13 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         card.setBackground(bg);
 
         TextView title=new TextView(this);
-        title.setText((mostSure?"MOST SURE • ":"HIGH CHANCE • ")+quick.label+" "+quick.score+"%");
+        title.setText((verified.tier>=3?"STRONG VERIFIED • ":"HIGH VERIFIED • ")+quick.label+" "+quick.score+"%");
         title.setTextSize(20); title.setTypeface(null,Typeface.BOLD); title.setTextColor(color);
         card.addView(title);
 
         TextView details=new TextView(this);
         details.setText(currentAsset()+" • M"+horizon+" • TRADE "+tradeDuration(horizon)+"\n"+
-                quick.reason+"\nWait for completed-candle confirmation");
+                quick.reason+"\n"+verified.summary()+"\nWait for completed-candle confirmation");
         details.setTextSize(13); details.setTextColor(Color.WHITE);
         card.addView(details);
 
@@ -911,7 +922,8 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         TextView title=new TextView(this);
         String signalTime=clock(predictionTargetStartMs);
         int pct="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
-        title.setText(r.label+"  "+pct+"%");
+        OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
+        title.setText((verified.tier>=3?"STRONG VERIFIED":"HIGH VERIFIED")+" • "+r.label+"  "+pct+"%");
         title.setTextSize(22);
         title.setTypeface(null,Typeface.BOLD);
         title.setTextColor(c);
@@ -922,7 +934,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         String recent=recentN<5?"WIN RATE: LEARNING":("RECENT WIN RATE "+learner.recentAccuracyPct(hi)+"% ("+recentN+")");
         TextView pair=new TextView(this);
         String pressure=pressureLine(r);
-        pair.setText(currentAsset()+" • M"+horizon+" • TRADE "+tradeDuration(horizon)+"\n"+r.label+" ENTRY "+signalTime+"\n"+entryState(System.currentTimeMillis(),predictionTargetStartMs)+"\nSETUP: "+shortSetup(r)+(pressure.isEmpty()?"":"\n"+pressure)+"\n"+recent);
+        pair.setText(currentAsset()+" • M"+horizon+" • TRADE "+tradeDuration(horizon)+"\n"+r.label+" ENTRY "+signalTime+"\n"+entryState(System.currentTimeMillis(),predictionTargetStartMs)+"\nSETUP: "+shortSetup(r)+(pressure.isEmpty()?"":"\n"+pressure)+"\n"+verified.summary()+"\n"+recent);
         pair.setTextSize(13);
         pair.setTextColor(Color.WHITE);
         card.addView(pair);
@@ -959,6 +971,8 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
 
     private void maybeNotify(SignalResult r,int horizon){
         if(r==null || !("BUY".equals(r.label)||"SELL".equals(r.label)))return;
+        OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
+        if(!verified.highVerified())return;
 
         // A strong model signal is not a guaranteed trade. Sound is deliberately
         // reserved for a user-configurable high-confidence subset so normal
@@ -996,7 +1010,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         String wr=rn<5?"WIN RATE LEARNING":("WIN RATE "+learner.recentAccuracyPct(hi)+"%");
         String fullInfo=currentAsset()+" • M"+horizon+" • TRADE "+tradeDuration(horizon)+"\n"+
                 r.label+" ENTRY "+clock(predictionTargetStartMs)+" • "+entryState(now,predictionTargetStartMs)+"\n"+
-                "SETUP: "+shortSetup(r)+(pressureLine(r).isEmpty()?"":"\n"+pressureLine(r))+"\n"+wr;
+                "SETUP: "+shortSetup(r)+(pressureLine(r).isEmpty()?"":"\n"+pressureLine(r))+"\n"+verified.summary()+"\n"+wr;
         n.setSmallIcon(icon)
                 .setContentTitle(r.label+" "+pct+"% • ENTRY "+clock(predictionTargetStartMs))
                 .setContentText(currentAsset()+" • M"+horizon+" • "+wr)
