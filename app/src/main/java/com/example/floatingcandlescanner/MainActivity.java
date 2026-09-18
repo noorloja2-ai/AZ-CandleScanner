@@ -51,13 +51,13 @@ public class MainActivity extends Activity {
         brand.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(brand);
 
-        TextView title=tx("BUY / SELL Entry Signal v16.0",22,Color.WHITE);
+        TextView title=tx("BUY / SELL Entry Signal v16.2",22,Color.WHITE);
         title.setTypeface(null,1);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(title);
 
         TextView d=tx(
-                "v16.0: AZ analyzes the visible broker chart, keeps automatic validated model control and Verified Range active, and shows clearer confidence titles. No automatic trading.",
+                "v16.2: Long-press the floating AZ logo to see VERY STRONG, BEST, GOOD or POOR market conditions with the reason. Existing learning, signals and notifications remain active. No automatic trading.",
                 14,Color.rgb(148,163,184));
         d.setPadding(0,dp(8),0,dp(16));
         root.addView(d);
