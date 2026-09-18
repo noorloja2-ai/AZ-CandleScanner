@@ -872,13 +872,60 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 :"AI LIVE: "+lastLiveDirection+" "+lastLivePercent+"% • 1s refresh";
         infoDetails.setText(
                 "Chart: "+currentAsset()+" • M"+horizon+"\n"+
-                "Recommended trade: "+tradeDuration(horizon)+"\n\n"+
+                "Recommended trade: "+tradeDuration(horizon)+"\n"+
+                marketConditionSummary()+"\n\n"+
                 live+"\n"+
                 finalSignal+"\n"+
                 entryState(now,predictionTargetStartMs)+"\n"+
                 winRateText()+"\n\n"+
                 "NEXT CANDLE: "+clock(next)+" • "+countdown(next-now)+"\n"+
                 "LIVE = 1s AI refresh • FINAL = after candle close");
+    }
+
+    private String marketConditionSummary(){
+        CandleVision.Analysis analysis=lastAnalysis;
+        if(analysis==null || !analysis.valid || analysis.boardState==null)
+            return "MARKET CONDITION: POOR • Waiting for a valid chart scan";
+
+        CandleVision.BoardState s=analysis.boardState;
+        double trend=Math.min(1.0,Math.abs(s.trend));
+        double momentum=Math.min(1.0,Math.abs(s.momentum));
+        double movement=Math.min(1.0,Math.max(0.0,s.body));
+        double volatility=s.volatilityRatio;
+        boolean sameTrendMomentum=s.trend*s.momentum>0;
+        boolean sameLast=s.trend*s.lastDirection>0;
+        boolean sameSequence=s.trend*s.sequenceBias>0;
+        int agreement=(sameTrendMomentum?1:0)+(sameLast?1:0)+(sameSequence?1:0);
+        boolean flat=trend<.10 && momentum<.18;
+        boolean notMoving=movement<.16 || volatility<.62;
+        boolean unstable=volatility>1.65 ||
+                (Math.abs(s.acceleration)>.72 && !sameTrendMomentum);
+
+        String status;
+        String reason;
+        if(flat || notMoving){
+            status="POOR";
+            reason="Market not moving / sideways";
+        }else if(unstable){
+            status="POOR";
+            reason="Unstable or excessive volatility";
+        }else if(trend>=.58 && momentum>=.55 && movement>=.48 &&
+                volatility>=.82 && volatility<=1.35 && agreement==3){
+            status="VERY STRONG";
+            reason="Trend, momentum, candle movement and direction all agree";
+        }else if(trend>=.38 && momentum>=.36 && movement>=.34 &&
+                volatility>=.72 && volatility<=1.48 && agreement>=2){
+            status="BEST";
+            reason="Trading conditions suitable; wait for BUY/SELL confirmation";
+        }else if(trend>=.20 && momentum>=.22 && movement>=.23 &&
+                volatility>=.66 && volatility<=1.55 && agreement>=1){
+            status="GOOD";
+            reason="Acceptable movement; strong confirmation required";
+        }else{
+            status="POOR";
+            reason="Weak or conflicting market conditions";
+        }
+        return "MARKET CONDITION: "+status+" • "+reason;
     }
 
     private String pressureLine(SignalResult r){
