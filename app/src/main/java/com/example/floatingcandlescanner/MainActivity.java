@@ -15,18 +15,18 @@ import android.widget.*;
 
 import java.util.Locale;
 
-/** Cyber dashboard. Swipe horizontally between the five user-facing pages. */
+/** Cyber dashboard. Use the top menu to open each user-facing page. */
 public class MainActivity extends Activity {
     private static final int CYAN=Color.rgb(34,211,238), BLUE=Color.rgb(37,99,235);
     private static final int CARD=Color.rgb(10,24,47);
     SharedPreferences prefs;
-    TextView status,cropText,sensText,learnText,autoSymbolText,pageTitle,pageDots;
+    TextView status,cropText,sensText,learnText,autoSymbolText;
     TextView scoreValue,lossScoreValue;
     OnlineLearner learner;
     AppUpdateManager updateManager;
     ViewFlipper pager;
+    Spinner topMenu;
     boolean pendingAccessibilityStart=false;
-    float touchDownX;
     final String[] pageNames={"OVERVIEW","SCANNER","CONTROLS","TRAINING","UPDATE"};
 
     @Override public void onCreate(Bundle b){
@@ -44,11 +44,11 @@ public class MainActivity extends Activity {
         shell.setBackground(cyberBackground());
         shell.addView(header());
 
-        pageTitle=tx(pageNames[0],13,CYAN); pageTitle.setTypeface(null,Typeface.BOLD);
-        pageTitle.setGravity(Gravity.CENTER); pageTitle.setPadding(0,dp(4),0,dp(2));
-        shell.addView(pageTitle,new LinearLayout.LayoutParams(-1,dp(28)));
-        pageDots=tx("●  ○  ○  ○  ○",14,CYAN); pageDots.setGravity(Gravity.CENTER);
-        shell.addView(pageDots,new LinearLayout.LayoutParams(-1,dp(24)));
+        topMenu=spinner(new String[]{"OVERVIEW","SCANNER","CONTROLS","TRAINING","UPDATE"});
+        topMenu.setContentDescription("Choose AZ option");
+        topMenu.setBackground(cardBg(CYAN));
+        topMenu.setPadding(dp(12),dp(2),dp(12),dp(2));
+        shell.addView(topMenu,space(-1,dp(52),10));
 
         pager=new ViewFlipper(this);
         pager.addView(page(buildOverview()));
@@ -57,20 +57,15 @@ public class MainActivity extends Activity {
         pager.addView(page(buildTraining()));
         pager.addView(page(buildUpdate()));
         shell.addView(pager,new LinearLayout.LayoutParams(-1,0,1));
+        topMenu.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+            public void onNothingSelected(AdapterView<?> parent){}
+            public void onItemSelected(AdapterView<?> parent,View view,int position,long id){ showPage(position); }
+        });
         setContentView(shell);
 
         labels(); updateLearning(); updateDashboard(); updateAutoSymbol();
         if(prefs.getBoolean("auto_update_check",true))
             pager.postDelayed(()->{ if(updateManager!=null) updateManager.checkForUpdate(false); },900);
-    }
-
-    @Override public boolean dispatchTouchEvent(MotionEvent e){
-        if(e.getAction()==MotionEvent.ACTION_DOWN) touchDownX=e.getX();
-        else if(e.getAction()==MotionEvent.ACTION_UP && pager!=null){
-            float dx=e.getX()-touchDownX;
-            if(Math.abs(dx)>dp(90)) showPage(pager.getDisplayedChild()+(dx<0?1:-1));
-        }
-        return super.dispatchTouchEvent(e);
     }
 
     View header(){
@@ -96,7 +91,7 @@ public class MainActivity extends Activity {
         status.setPadding(dp(10),dp(14),dp(10),dp(14)); status.setBackground(cardBg(CYAN)); r.addView(status,space(-1,-2,12));
         Button start=cyberButton("START FLOATING TAP SCAN",CYAN); start.setOnClickListener(v->startScan()); r.addView(start);
         Button stop=cyberButton("STOP SCAN",Color.rgb(248,113,113)); stop.setOnClickListener(v->stopScan()); r.addView(stop);
-        TextView hint=tx("Swipe left for scanner, controls, training and updates.",12,Color.rgb(148,163,184));
+        TextView hint=tx("Use the top menu to open scanner, controls, training and updates.",12,Color.rgb(148,163,184));
         hint.setGravity(Gravity.CENTER); hint.setPadding(0,dp(14),0,0); r.addView(hint);
         return r;
     }
@@ -195,8 +190,8 @@ public class MainActivity extends Activity {
         boolean forward=(wanted>old)||(old==n-1&&next==0);
         pager.setInAnimation(AnimationUtils.loadAnimation(this,forward?android.R.anim.slide_in_left:android.R.anim.fade_in));
         pager.setOutAnimation(AnimationUtils.loadAnimation(this,forward?android.R.anim.slide_out_right:android.R.anim.fade_out));
-        pager.setDisplayedChild(next); pageTitle.setText(pageNames[next]);
-        StringBuilder d=new StringBuilder(); for(int i=0;i<n;i++){if(i>0)d.append("  ");d.append(i==next?"●":"○");} pageDots.setText(d.toString());
+        pager.setDisplayedChild(next);
+        if(topMenu!=null && topMenu.getSelectedItemPosition()!=next) topMenu.setSelection(next);
         if(next==0)updateDashboard(); if(next==3)updateLearning();
     }
 
