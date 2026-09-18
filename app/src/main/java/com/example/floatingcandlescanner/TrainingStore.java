@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Calendar;
 
 /**
  * Keeps only numeric chart features/results. It does not save full screenshots.
@@ -24,6 +25,12 @@ import java.util.Locale;
  * mislabeled from a later candle.
  */
 public class TrainingStore {
+    public static class MonthlyStats {
+        public int wins;
+        public int losses;
+        public int total() { return wins + losses; }
+        public int score() { return total() == 0 ? 0 : Math.round(100f * wins / total()); }
+    }
     public static class Pending {
         public long createdAt;
         public long dueAt;
@@ -166,6 +173,46 @@ public class TrainingStore {
         File dir = new File(context.getFilesDir(), "training");
         return countRows(new File(dir,"training_samples_v2.csv")) +
                 countRows(new File(dir,"training_samples_v3.csv"));
+    }
+
+    /** Results resolved during the current calendar month on this device. */
+    public synchronized MonthlyStats currentMonthStats() {
+        MonthlyStats out = new MonthlyStats();
+        Calendar start = Calendar.getInstance();
+        start.set(Calendar.DAY_OF_MONTH, 1);
+        start.set(Calendar.HOUR_OF_DAY, 0);
+        start.set(Calendar.MINUTE, 0);
+        start.set(Calendar.SECOND, 0);
+        start.set(Calendar.MILLISECOND, 0);
+        long from = start.getTimeInMillis();
+        File dir = new File(context.getFilesDir(), "training");
+        addMonthRows(new File(dir, "training_samples_v2.csv"), from, out);
+        addMonthRows(new File(dir, "training_samples_v3.csv"), from, out);
+        return out;
+    }
+
+    private void addMonthRows(File f, long from, MonthlyStats out) {
+        if (!f.exists()) return;
+        try (BufferedReader r = new BufferedReader(new FileReader(f))) {
+            String header = r.readLine();
+            if (header == null) return;
+            String[] heads = header.split(",", -1);
+            int due = -1, correct = -1;
+            for (int i=0; i<heads.length; i++) {
+                if ("due_at".equals(heads[i])) due = i;
+                if ("correct".equals(heads[i])) correct = i;
+            }
+            if (due < 0 || correct < 0) return;
+            String line;
+            while ((line = r.readLine()) != null) {
+                String[] cols = line.split(",", -1);
+                if (cols.length <= Math.max(due, correct)) continue;
+                try {
+                    if (Long.parseLong(cols[due]) < from) continue;
+                    if ("1".equals(cols[correct])) out.wins++; else out.losses++;
+                } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
     }
 
     private int countRows(File f){

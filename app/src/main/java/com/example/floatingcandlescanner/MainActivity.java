@@ -5,584 +5,251 @@ import android.app.*;
 import android.content.*;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.*;
 import android.provider.Settings;
 import android.view.*;
+import android.view.animation.AnimationUtils;
 import android.widget.*;
 
 import java.util.Locale;
 
+/** Cyber dashboard. Swipe horizontally between the five user-facing pages. */
 public class MainActivity extends Activity {
+    private static final int CYAN=Color.rgb(34,211,238), BLUE=Color.rgb(37,99,235);
+    private static final int CARD=Color.rgb(10,24,47);
     SharedPreferences prefs;
-    TextView status,cropText,sensText,learnText,autoSymbolText;
+    TextView status,cropText,sensText,learnText,autoSymbolText,pageTitle,pageDots;
+    TextView scoreValue,winValue,lossValue;
     OnlineLearner learner;
     AppUpdateManager updateManager;
+    ViewFlipper pager;
     boolean pendingAccessibilityStart=false;
+    float touchDownX;
+    final String[] pageNames={"OVERVIEW","SCANNER","CONTROLS","TRAINING","UPDATE"};
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         prefs=getSharedPreferences("scanner",MODE_PRIVATE);
         learner=new OnlineLearner(this);
         learner.setAsset(currentDetectedAsset());
-
-        if(Build.VERSION.SDK_INT>=33
-                &&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+        if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 !=PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},2001);
 
-        ScrollView sc=new ScrollView(this);
-        LinearLayout root=new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(18),dp(22),dp(18),dp(28));
-        root.setBackgroundColor(Color.rgb(11,18,32));
-        sc.addView(root);
+        LinearLayout shell=new LinearLayout(this);
+        shell.setOrientation(LinearLayout.VERTICAL);
+        shell.setPadding(dp(14),dp(12),dp(14),dp(12));
+        shell.setBackground(cyberBackground());
+        shell.addView(header());
 
-        ImageView appLogo=new ImageView(this);
-        appLogo.setImageResource(R.mipmap.ic_launcher);
-        appLogo.setContentDescription("AZ app logo");
-        appLogo.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        LinearLayout.LayoutParams logoLp=new LinearLayout.LayoutParams(dp(92),dp(92));
-        logoLp.gravity=Gravity.CENTER_HORIZONTAL;
-        logoLp.bottomMargin=dp(8);
-        root.addView(appLogo,logoLp);
+        pageTitle=tx(pageNames[0],13,CYAN); pageTitle.setTypeface(null,Typeface.BOLD);
+        pageTitle.setGravity(Gravity.CENTER); pageTitle.setPadding(0,dp(4),0,dp(2));
+        shell.addView(pageTitle,new LinearLayout.LayoutParams(-1,dp(28)));
+        pageDots=tx("●  ○  ○  ○  ○",14,CYAN); pageDots.setGravity(Gravity.CENTER);
+        shell.addView(pageDots,new LinearLayout.LayoutParams(-1,dp(24)));
 
-        TextView brand=tx("AZ",18,Color.rgb(34,211,238));
-        brand.setTypeface(null,1);
-        brand.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.addView(brand);
+        pager=new ViewFlipper(this);
+        pager.addView(page(buildOverview()));
+        pager.addView(page(buildScanner()));
+        pager.addView(page(buildControls()));
+        pager.addView(page(buildTraining()));
+        pager.addView(page(buildUpdate()));
+        shell.addView(pager,new LinearLayout.LayoutParams(-1,0,1));
+        setContentView(shell);
 
-        TextView title=tx("BUY / SELL Entry Signal v16.2",22,Color.WHITE);
-        title.setTypeface(null,1);
-        title.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.addView(title);
-
-        TextView d=tx(
-                "v16.2: Long-press the floating AZ logo to see VERY STRONG, BEST, GOOD or POOR market conditions with the reason. Existing learning, signals and notifications remain active. No automatic trading.",
-                14,Color.rgb(148,163,184));
-        d.setPadding(0,dp(8),0,dp(16));
-        root.addView(d);
-
-        Button st=btn("START FLOATING TAP SCAN");
-        st.setOnClickListener(v->startScan());
-        root.addView(st);
-
-        Button stop=btn("Stop scanner");
-        stop.setOnClickListener(v->{
-            AutoSymbolAccessibilityService.setScannerEnabled(this,false);
-            status.setText("Scanner stopped. Accessibility may stay enabled, but chart scanning and BUY/SELL alerts are off.");
-        });
-        root.addView(stop);
-
-        status=tx("Status: ready",14,Color.rgb(134,239,172));
-        status.setPadding(0,dp(12),0,dp(12));
-        root.addView(status);
-
-        updateManager=new AppUpdateManager(this,status);
-        Button updateBtn=btn("CHECK / UPDATE APP");
-        updateBtn.setOnClickListener(v->updateManager.checkForUpdate(true));
-        root.addView(updateBtn);
-
-        CheckBox autoUpdateCheck=new CheckBox(this);
-        autoUpdateCheck.setText("Automatically check for app updates on startup");
-        autoUpdateCheck.setTextColor(Color.rgb(167,243,208));
-        autoUpdateCheck.setChecked(prefs.getBoolean("auto_update_check",true));
-        autoUpdateCheck.setOnCheckedChangeListener((button,checked)->
-                prefs.edit().putBoolean("auto_update_check",checked).apply());
-        root.addView(autoUpdateCheck);
-
-        TextView updateNote=tx(
-                "App updates are checked from the permanent AZ GitHub update channel. A newer APK can be downloaded automatically, but Android always shows the normal install confirmation. Future APKs use the same permanent signing certificate.",
-                12,Color.rgb(251,191,36));
-        updateNote.setPadding(0,0,0,dp(12));
-        root.addView(updateNote);
-
-        TextView brokerTitle=tx("Broker browser / login",18,Color.WHITE);
-        brokerTitle.setTypeface(null,1);
-        brokerTitle.setPadding(0,dp(8),0,0);
-        root.addView(brokerTitle);
-
-        EditText brokerUrl=new EditText(this);
-        brokerUrl.setSingleLine(true);
-        brokerUrl.setTextColor(Color.WHITE);
-        brokerUrl.setHintTextColor(Color.LTGRAY);
-        brokerUrl.setHint("https://broker-site.com");
-        brokerUrl.setText(prefs.getString("broker_url","https://pocketoption.com/"));
-        root.addView(brokerUrl,new LinearLayout.LayoutParams(-1,dp(52)));
-
-        Button openBroker=btn("Open Broker / Login");
-        openBroker.setOnClickListener(v->{
-            String url=brokerUrl.getText().toString().trim();
-            if(!url.isEmpty()) prefs.edit().putString("broker_url",url).apply();
-            startActivity(new Intent(this,BrokerActivity.class));
-        });
-        root.addView(openBroker);
-
-        TextView brokerNote=tx(
-                "Login stays inside the broker webpage/session. The scanner does not read or save your broker username/password. If embedded login is blocked, tap Chrome in the broker screen.",
-                12,Color.rgb(251,191,36));
-        brokerNote.setPadding(0,0,0,dp(10));
-        root.addView(brokerNote);
-
-
-        TextView assetTitle=tx("Automatic chart + timeframe recognition",18,Color.WHITE);
-        assetTitle.setTypeface(null,1);
-        root.addView(assetTitle);
-
-        autoSymbolText=tx("Detected chart: checking…",14,Color.rgb(167,243,208));
-        autoSymbolText.setPadding(0,dp(4),0,dp(6));
-        root.addView(autoSymbolText);
-
-        TextView timeframeLabel=tx("Signal timeframe",14,Color.WHITE);
-        root.addView(timeframeLabel);
-
-        Spinner timeframeSpinner=new Spinner(this);
-        String[] timeframeValues={"AUTO","M1","M2","M3","M4","M5"};
-        String[] timeframeNames={
-                "AUTO — follow broker",
-                "M1 — 1 minute",
-                "M2 — 2 minutes",
-                "M3 — 3 minutes",
-                "M4 — 4 minutes",
-                "M5 — 5 minutes"};
-        timeframeSpinner.setAdapter(new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_dropdown_item,timeframeNames));
-        String savedTf=prefs.getString("timeframe_mode","AUTO");
-        int tfPos=0;
-        for(int i=0;i<timeframeValues.length;i++)
-            if(timeframeValues[i].equals(savedTf))tfPos=i;
-        timeframeSpinner.setSelection(tfPos);
-        timeframeSpinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
-            public void onItemSelected(android.widget.AdapterView<?> p,View v,int pos,long id){
-                prefs.edit().putString("timeframe_mode",timeframeValues[pos]).apply();
-                updateAutoSymbol();
-            }
-            public void onNothingSelected(android.widget.AdapterView<?> p){}
-        });
-        root.addView(timeframeSpinner);
-
-        TextView timeframeNote=tx(
-                "AUTO follows the timeframe exposed by the broker. If a canvas-based broker hides it, AUTO keeps the last detected timeframe; on first use the fallback is M1. Recommended duration: M1=60s, M2=120s, M3=180s, M4=240s, M5=300s. Enter only after the completed-candle signal.",
-                12,Color.rgb(251,191,36));
-        timeframeNote.setPadding(0,0,0,dp(8));
-        root.addView(timeframeNote);
-
-        Button autoDetect=btn("Enable automatic symbol recognition");
-        autoDetect.setOnClickListener(v->{
-            status.setText("In Accessibility, enable BUY SELL Signal Notifier for automatic pair recognition.");
-            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-        });
-        root.addView(autoDetect);
-
-        TextView autoNote=tx(
-                "No currency selection is required. AUTO can also follow M1–M5 when the broker exposes its timeframe. Accessibility is used to identify the active broker screen and capture frames for candle analysis. Screenshots are analyzed in memory and are not saved. Password fields and full screen text are not stored.",
-                12,Color.rgb(251,191,36));
-        autoNote.setPadding(0,0,0,dp(8));
-        root.addView(autoNote);
-
-        CheckBox brokerBoardLearning=new CheckBox(this);
-        brokerBoardLearning.setText("Broker Board Learning (remember validated candle behaviour)");
-        brokerBoardLearning.setTextColor(Color.rgb(125,211,252));
-        brokerBoardLearning.setChecked(prefs.getBoolean("broker_board_learning",true));
-        brokerBoardLearning.setOnCheckedChangeListener((button,checked)->
-                prefs.edit().putBoolean("broker_board_learning",checked).apply());
-        root.addView(brokerBoardLearning);
-
-        TextView boardLearningNote=tx(
-                "When enabled, AZ watches the chart while scanning, converts candle behaviour into numeric pattern states, waits for the exact future candle close, then learns the resolved UP/DOWN result. Only validated outcomes affect later predictions; images and login data are not saved.",
-                12,Color.rgb(148,163,184));
-        boardLearningNote.setPadding(0,0,0,dp(8));
-        root.addView(boardLearningNote);
-
-        CheckBox quickDecision=new CheckBox(this);
-        quickDecision.setText("Quick High-Confidence Decision (3 stable live scans)");
-        quickDecision.setTextColor(Color.rgb(167,243,208));
-        quickDecision.setChecked(prefs.getBoolean("quick_decision",true));
-        quickDecision.setOnCheckedChangeListener((button,checked)->
-                prefs.edit().putBoolean("quick_decision",checked).apply());
-        root.addView(quickDecision);
-
-        TextView quickThresholdText=tx("Quick signal threshold: "+prefs.getInt("quick_decision_threshold",82)+"%",14,Color.WHITE);
-        root.addView(quickThresholdText);
-        SeekBar quickThreshold=new SeekBar(this);
-        quickThreshold.setMax(12); // 78..90
-        quickThreshold.setProgress(Math.max(0,Math.min(12,prefs.getInt("quick_decision_threshold",82)-78)));
-        quickThreshold.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
-            public void onProgressChanged(SeekBar b,int p,boolean fromUser){
-                int value=78+p;
-                quickThresholdText.setText("Quick signal threshold: "+value+"%");
-                if(fromUser)prefs.edit().putInt("quick_decision_threshold",value).apply();
-            }
-            public void onStartTrackingTouch(SeekBar b){}
-            public void onStopTrackingTouch(SeekBar b){}
-        });
-        root.addView(quickThreshold);
-
-        TextView quickNote=tx(
-                "QUICK BUY/SELL is provisional: it requires at least 3 consecutive live scans in the same direction, at least 4 independent confirmations, acceptable volatility and the selected score threshold. If the base model is still WAIT, the quick gate becomes even stricter. Official sound/notification remains tied to the completed-candle signal.",
-                12,Color.rgb(251,191,36));
-        quickNote.setPadding(0,0,0,dp(8));
-        root.addView(quickNote);
-
-        CheckBox highAccuracy=new CheckBox(this);
-        highAccuracy.setText("High Accuracy Mode (stricter strong-alert threshold)");
-        highAccuracy.setTextColor(Color.WHITE);
-        highAccuracy.setChecked(prefs.getBoolean("high_accuracy",true));
-        highAccuracy.setOnCheckedChangeListener((button,checked)->
-                prefs.edit().putBoolean("high_accuracy",checked).apply());
-        root.addView(highAccuracy);
-
-        CheckBox eliteMode=new CheckBox(this);
-        eliteMode.setText("Elite Precision Mode (4/4 agreement for strong alerts)");
-        eliteMode.setTextColor(Color.rgb(167,243,208));
-        eliteMode.setChecked(prefs.getBoolean("elite_mode",true));
-        eliteMode.setOnCheckedChangeListener((button,checked)->
-                prefs.edit().putBoolean("elite_mode",checked).apply());
-        root.addView(eliteMode);
-
-        TextView eliteNote=tx(
-                "Elite mode is intentionally selective for strong alerts. Every valid scan still shows one leading BUY or SELL direction with its confidence percentage.",
-                12,Color.rgb(251,191,36));
-        eliteNote.setPadding(0,0,0,dp(8));
-        root.addView(eliteNote);
-
-        CheckBox soundAlerts=new CheckBox(this);
-        soundAlerts.setText("Sound + vibration for high-confidence BUY / SELL");
-        soundAlerts.setTextColor(Color.rgb(253,230,138));
-        soundAlerts.setChecked(prefs.getBoolean("sound_alerts",true));
-        soundAlerts.setOnCheckedChangeListener((button,checked)->
-                prefs.edit().putBoolean("sound_alerts",checked).apply());
-        root.addView(soundAlerts);
-
-        TextView soundThresholdText=tx("Sound alert threshold: "+prefs.getInt("sound_alert_threshold",85)+"%",14,Color.WHITE);
-        root.addView(soundThresholdText);
-        SeekBar soundThreshold=new SeekBar(this);
-        soundThreshold.setMax(15); // 75..90
-        soundThreshold.setProgress(Math.max(0,Math.min(15,prefs.getInt("sound_alert_threshold",85)-75)));
-        soundThreshold.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
-            public void onProgressChanged(SeekBar b,int p,boolean fromUser){
-                int value=75+p;
-                soundThresholdText.setText("Sound alert threshold: "+value+"%");
-                if(fromUser)prefs.edit().putInt("sound_alert_threshold",value).apply();
-            }
-            public void onStartTrackingTouch(SeekBar b){}
-            public void onStopTrackingTouch(SeekBar b){}
-        });
-        root.addView(soundThreshold);
-
-        TextView soundNote=tx(
-                "Default 85%. The bot still analyzes every candle. Sound is sent only for an official completed-candle BUY/SELL signal at or above this level; live 1-second calculations never make the sound alert.",
-                12,Color.rgb(251,191,36));
-        soundNote.setPadding(0,0,0,dp(8));
-        root.addView(soundNote);
-
-        TextView refreshNote=tx(
-                "Live AI refresh: every 1 second. v15.1 shows QUICK BUY/SELL only after stable multi-factor confirmation and blocks conflicting, flat, doji, extreme-chase and abnormal-volatility conditions as NO TRADE. The official entry signal and sound remain locked to the completed candle.",
-                12,Color.rgb(125,211,252));
-        refreshNote.setPadding(0,0,0,dp(8));
-        root.addView(refreshNote);
-
-
-        TextView sessionLabel=tx("Trading session filter",14,Color.WHITE);
-        root.addView(sessionLabel);
-
-        Spinner sessionSpinner=new Spinner(this);
-        String[] sessions={"ALL","LONDON","NEW_YORK","OVERLAP","ASIA"};
-        String[] sessionNames={"All sessions","London","New York","London + New York overlap","Asia"};
-        ArrayAdapter<String> sessionAdapter=new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_dropdown_item,sessionNames);
-        sessionSpinner.setAdapter(sessionAdapter);
-        String savedSession=prefs.getString("session_filter","ALL");
-        int sessionPos=0;
-        for(int i=0;i<sessions.length;i++)if(sessions[i].equals(savedSession))sessionPos=i;
-        sessionSpinner.setSelection(sessionPos);
-        sessionSpinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
-            public void onItemSelected(android.widget.AdapterView<?> p,View v,int pos,long id){
-                prefs.edit().putString("session_filter",sessions[pos]).apply();
-            }
-            public void onNothingSelected(android.widget.AdapterView<?> p){}
-        });
-        root.addView(sessionSpinner);
-
-        Button news30=btn("High-impact News Lock: 30 minutes");
-        news30.setOnClickListener(v->{
-            long until=System.currentTimeMillis()+30L*60L*1000L;
-            prefs.edit().putLong("news_lock_until",until).apply();
-            status.setText("News Lock active for 30 minutes — BUY/SELL signals blocked.");
-        });
-        root.addView(news30);
-
-        Button newsClear=btn("Clear News Lock");
-        newsClear.setOnClickListener(v->{
-            prefs.edit().putLong("news_lock_until",0L).apply();
-            status.setText("News Lock cleared.");
-        });
-        root.addView(newsClear);
-
-        TextView dataNote=tx(
-                "Live OHLC uses a standard market-data feed for regular assets. Pocket Option OTC remains visual-only because standard market candles are not the same as broker OTC candles. The API key is not saved in the APK or preferences.",
-                12,Color.rgb(251,191,36));
-        dataNote.setPadding(0,0,0,dp(10));
-        root.addView(dataNote);
-
-
-        TextView knowledgeTitle=tx("Candlestick + professional chart knowledge",18,Color.WHITE);
-        knowledgeTitle.setTypeface(null,1);
-        root.addView(knowledgeTitle);
-
-        TextView knowledge=tx(
-                CandlestickKnowledgeEngine.CATALOG_SIZE+" main named pattern/shape rules with context: "+
-                        CandlestickKnowledgeEngine.catalogSummary()+
-                        ". Combined uploaded knowledge also includes HH/HL and LH/LL trend structure, support/resistance role reversal, confirmed/failed breakouts, double/triple tops and bottoms, rectangles, symmetrical/ascending/descending triangles, wedges, flags/pennants, Head & Shoulders, inverse Head & Shoulders, Cup & Handle, Pipe/Two-Bar Reversal, NR4/inside-range breakout, conservative gap-pivot logic, BOS/CHoCH-style confirmation, liquidity sweeps, FVG, EMA 9/21/50/200 context, RSI-14 and Fibonacci 50/61.8/78.6 confluence. Patterns never force a trade by name alone; confirmation and current structure must agree.",
-                12,Color.rgb(167,243,208));
-        knowledge.setPadding(0,dp(4),0,dp(10));
-        root.addView(knowledge);
-
-        TextView learnTitle=tx("Automatic learning status",18,Color.WHITE);
-        learnTitle.setTypeface(null,1);
-        root.addView(learnTitle);
-
-        learnText=tx("",13,Color.rgb(203,213,225));
-        learnText.setPadding(0,dp(6),0,dp(8));
-        root.addView(learnText);
-
-        Button reset=btn("Reset learned calibration");
-        reset.setOnClickListener(v->new AlertDialog.Builder(this)
-                .setTitle("Reset learning?")
-                .setMessage("This clears automatic calibration statistics for the currently selected asset only. It does not affect app permissions.")
-                .setNegativeButton("Cancel",null)
-                .setPositiveButton("Reset",(dialog,which)->{
-                    learner.setAsset(currentDetectedAsset());
-                    learner.resetCurrentAsset();
-                    new TrainingStore(this).clearPending();
-                    updateLearning();
-                }).show());
-        root.addView(reset);
-
-        TextView communityTitle=tx("Automatic AZ AI control",18,Color.WHITE);
-        communityTitle.setTypeface(null,1);
-        communityTitle.setPadding(0,dp(12),0,0);
-        root.addView(communityTitle);
-
-        TextView communityNote=tx(
-                "Always on. AZ converts completed outcomes into anonymous numeric learning, downloads versioned AI models, validates every value, limits remote influence to 20%, monitors the latest 50 eligible results and automatically quarantines or rolls back a model if performance becomes harmful. No screenshots, credentials, Android identifiers or GitHub write token are sent.",
-                12,Color.rgb(251,191,36));
-        communityNote.setPadding(0,0,0,dp(6));
-        root.addView(communityNote);
-
-        TextView communityAutoStatus=tx(
-                "Shared learning: "+CommunityLearningSync.status(this),
-                12,Color.rgb(167,243,208));
-        communityAutoStatus.setPadding(0,0,0,dp(6));
-        root.addView(communityAutoStatus);
-
-        TextView cal=tx("Chart area calibration",18,Color.WHITE);
-        cal.setTypeface(null,1);
-        cal.setPadding(0,dp(12),0,0);
-        root.addView(cal);
-
-        TextView h=tx(
-                "If the result cannot see candles, adjust the crop so it covers mostly the chart.",
-                13,Color.rgb(148,163,184));
-        root.addView(h);
-
-        slider(root,"Left crop %","left",0,30,5);
-        slider(root,"Top crop %","top",0,50,18);
-        slider(root,"Right crop %","right",70,100,96);
-        slider(root,"Bottom crop %","bottom",55,100,80);
-
-        cropText=tx("",13,Color.rgb(203,213,225));
-        root.addView(cropText);
-
-        TextView tl=tx("Candle colors",14,Color.WHITE);
-        tl.setPadding(0,dp(14),0,dp(5));
-        root.addView(tl);
-
-        Spinner sp=new Spinner(this);
-        String[] themes={"Auto (green vs red, UI-safe)","Green vs red","Blue vs red"};
-        sp.setAdapter(new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_dropdown_item,themes));
-        sp.setSelection(prefs.getInt("theme",0));
-        sp.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
-            public void onItemSelected(android.widget.AdapterView<?> p,View v,int pos,long id){
-                prefs.edit().putInt("theme",pos).apply();
-            }
-            public void onNothingSelected(android.widget.AdapterView<?> p){}
-        });
-        root.addView(sp);
-
-        TextView sl=tx("AI signal threshold",14,Color.WHITE);
-        sl.setPadding(0,dp(14),0,0);
-        root.addView(sl);
-
-        SeekBar sb=new SeekBar(this);
-        sb.setMax(2);
-        sb.setProgress(prefs.getInt("sensitivity",1));
-        root.addView(sb);
-
-        sensText=tx("",13,Color.rgb(203,213,225));
-        root.addView(sensText);
-
-        sb.setOnSeekBarChangeListener(new SimpleSeek(){
-            public void onProgressChanged(SeekBar s,int p,boolean u){
-                prefs.edit().putInt("sensitivity",p).apply();
-                labels();
-            }
-        });
-
-        labels();
-        updateLearning();
-
-        TextView note=tx(
-                "Learning remains automatic on this phone and shared learning sync is always on. Only anonymous resolved numeric rows are queued for server-side validation; local calibration is never replaced. Validated GitHub community knowledge can add only a limited weight to predictions and is refreshed automatically. There are no I WON / I LOST buttons. Displayed BUY/SELL percentages are confidence estimates, not guaranteed probabilities or win rates.",
-                13,Color.rgb(251,191,36));
-        note.setPadding(0,dp(18),0,0);
-        root.addView(note);
-
-        setContentView(sc);
+        labels(); updateLearning(); updateDashboard(); updateAutoSymbol();
         if(prefs.getBoolean("auto_update_check",true))
-            root.postDelayed(()->{ if(updateManager!=null) updateManager.checkForUpdate(false); },900);
+            pager.postDelayed(()->{ if(updateManager!=null) updateManager.checkForUpdate(false); },900);
     }
 
-    @Override protected void onResume(){
-        super.onResume();
-        if(learner!=null){
-            learner.setAsset(currentDetectedAsset());
-            updateLearning();
+    @Override public boolean dispatchTouchEvent(MotionEvent e){
+        if(e.getAction()==MotionEvent.ACTION_DOWN) touchDownX=e.getX();
+        else if(e.getAction()==MotionEvent.ACTION_UP && pager!=null){
+            float dx=e.getX()-touchDownX;
+            if(Math.abs(dx)>dp(90)) showPage(pager.getDisplayedChild()+(dx<0?1:-1));
         }
-        updateAutoSymbol();
-        CommunityLearningSync.refreshAndFlushAsync(this);
-        if(pendingAccessibilityStart && AutoSymbolAccessibilityService.isConnected()){
-            pendingAccessibilityStart=false;
-            startScan();
-        }
+        return super.dispatchTouchEvent(e);
     }
 
-    @Override protected void onDestroy(){
-        if(updateManager!=null) updateManager.destroy();
-        super.onDestroy();
+    View header(){
+        LinearLayout h=new LinearLayout(this); h.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView logo=new ImageView(this); logo.setImageResource(R.mipmap.ic_launcher);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        h.addView(logo,new LinearLayout.LayoutParams(dp(66),dp(66)));
+        LinearLayout words=new LinearLayout(this); words.setOrientation(LinearLayout.VERTICAL);
+        TextView brand=tx("AZ  NEURAL SCANNER",19,Color.WHITE); brand.setTypeface(null,Typeface.BOLD);
+        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.3",11,CYAN);
+        words.addView(brand); words.addView(sub); h.addView(words,new LinearLayout.LayoutParams(0,-2,1));
+        return h;
     }
 
-    String currentDetectedAsset(){
-        String a=prefs==null?"":prefs.getString("detected_asset","");
-        return a==null||a.trim().isEmpty()?"AUTO_CHART":a.trim();
+    LinearLayout buildOverview(){
+        LinearLayout r=column();
+        TextView hero=tx("PERFORMANCE MATRIX",20,Color.WHITE); hero.setTypeface(null,Typeface.BOLD);
+        hero.setGravity(Gravity.CENTER); hero.setPadding(0,dp(12),0,dp(14)); r.addView(hero);
+        LinearLayout metrics=new LinearLayout(this); metrics.setOrientation(LinearLayout.HORIZONTAL);
+        scoreValue=metric(metrics,"WIN SCORE",CYAN); winValue=metric(metrics,"MONTHLY PROFIT",Color.rgb(74,222,128));
+        lossValue=metric(metrics,"MONTHLY LOSS",Color.rgb(248,113,113)); r.addView(metrics);
+        status=tx("SYSTEM READY",13,Color.rgb(134,239,172)); status.setGravity(Gravity.CENTER);
+        status.setPadding(dp(10),dp(14),dp(10),dp(14)); status.setBackground(cardBg(CYAN)); r.addView(status,space(-1,-2,12));
+        Button start=cyberButton("START FLOATING TAP SCAN",CYAN); start.setOnClickListener(v->startScan()); r.addView(start);
+        Button stop=cyberButton("STOP SCAN",Color.rgb(248,113,113)); stop.setOnClickListener(v->stopScan()); r.addView(stop);
+        TextView hint=tx("Swipe left for scanner, controls, training and updates.",12,Color.rgb(148,163,184));
+        hint.setGravity(Gravity.CENTER); hint.setPadding(0,dp(14),0,0); r.addView(hint);
+        return r;
     }
 
-    void updateAutoSymbol(){
-        if(autoSymbolText==null)return;
-        String a=currentDetectedAsset();
-        long t=prefs.getLong("detected_asset_time",0L);
-        String mode=prefs.getString("timeframe_mode","AUTO");
-        String tf;
-        if(!"AUTO".equals(mode)) tf=mode+" manual";
-        else{
-            String detected=prefs.getString("detected_timeframe","");
-            long tt=prefs.getLong("detected_timeframe_time",0L);
-            if(!detected.isEmpty() && System.currentTimeMillis()-tt<=30*60_000L){
-                tf=detected+" auto";
-                prefs.edit().putString("last_valid_timeframe",detected).apply();
-            }else{
-                String fallback=prefs.getString("last_valid_timeframe","M1");
-                if(!fallback.matches("M[1-5]"))fallback="M1";
-                tf=fallback+" AUTO fallback";
-            }
-        }
-        if("AUTO_CHART".equals(a))
-            autoSymbolText.setText("Detected chart: AUTO visual mode • "+tf);
-        else
-            autoSymbolText.setText("Detected chart: "+a+(t>0?" • automatic":"")+" • "+tf);
+    TextView metric(LinearLayout parent,String label,int color){
+        LinearLayout c=new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setGravity(Gravity.CENTER);
+        c.setPadding(dp(5),dp(15),dp(5),dp(15)); c.setBackground(cardBg(color));
+        TextView value=tx("0",25,color); value.setTypeface(null,Typeface.BOLD); value.setGravity(Gravity.CENTER);
+        TextView name=tx(label,9,Color.rgb(203,213,225)); name.setGravity(Gravity.CENTER);
+        c.addView(value); c.addView(name); LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(96),1);
+        lp.setMargins(dp(3),0,dp(3),dp(12)); parent.addView(c,lp); return value;
     }
 
-    void updateLearning(){
-        if(learnText==null)return;
-        StringBuilder s=new StringBuilder();
-        int all=learner.totalSamplesAll();
-        s.append("Detected chart: ").append(currentDetectedAsset()).append("\n");
-        TrainingStore store=new TrainingStore(this);
-        s.append("Resolved automatic labels: ").append(all).append("\n");
-        s.append("Boundary-aligned CSV rows: ").append(store.resolvedRowCount()).append("\n");
-        s.append("Pending exact-close labels: ").append(store.pendingCount()).append("\n");
-        s.append("Community learning: ").append(CommunityLearningSync.status(this)).append("\n");
-        for(int i=0;i<5;i++){
-            int n=learner.totalSamples(i);
-            s.append("M").append(i+1).append(": ")
-                    .append(n).append(" samples");
-            if(n>0)s.append(" • auto score ")
-                    .append(learner.accuracyPct(i)).append("% all-time • ")
-                    .append(learner.recentAccuracyPct(i)).append("% recent");
-            String bestSetup=learner.bestSetup(i);
-            if(!bestSetup.isEmpty())s.append(" • best setup: ").append(bestSetup);
-            s.append("\n  ").append(learner.verification(i).summary());
-            if(i<4)s.append("\n");
-        }
-        if(all<150)s.append("\n\nAutomatic learning is still building calibration.");
-        else s.append("\n\nAutomatic learned calibration is active.");
-        learnText.setText(s.toString());
+    LinearLayout buildScanner(){
+        LinearLayout r=column(); section(r,"FLOATING SCANNER");
+        Button start=cyberButton("START FLOATING TAP SCAN",CYAN); start.setOnClickListener(v->startScan()); r.addView(start);
+        Button stop=cyberButton("STOP SCAN",Color.rgb(248,113,113)); stop.setOnClickListener(v->stopScan()); r.addView(stop);
+        section(r,"BROKER / LOGIN");
+        EditText url=new EditText(this); url.setSingleLine(true); url.setTextColor(Color.WHITE);
+        url.setHintTextColor(Color.GRAY); url.setText(prefs.getString("broker_url","https://pocketoption.com/"));
+        r.addView(url,new LinearLayout.LayoutParams(-1,dp(52)));
+        Button open=cyberButton("OPEN BROKER",BLUE); open.setOnClickListener(v->{
+            String x=url.getText().toString().trim(); if(!x.isEmpty())prefs.edit().putString("broker_url",x).apply();
+            startActivity(new Intent(this,BrokerActivity.class)); }); r.addView(open);
+        section(r,"AUTOMATIC CHART RECOGNITION");
+        autoSymbolText=tx("Detected chart: checking…",14,Color.rgb(167,243,208)); r.addView(autoSymbolText,space(-1,-2,8));
+        String[] values={"AUTO","M1","M2","M3","M4","M5"};
+        String[] names={"AUTO — follow broker","M1 — 1 minute","M2 — 2 minutes","M3 — 3 minutes","M4 — 4 minutes","M5 — 5 minutes"};
+        Spinner tf=spinner(names); int pos=0; String saved=prefs.getString("timeframe_mode","AUTO");
+        for(int i=0;i<values.length;i++)if(values[i].equals(saved))pos=i; tf.setSelection(pos);
+        tf.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){ public void onNothingSelected(AdapterView<?> p){}
+            public void onItemSelected(AdapterView<?> p,View v,int i,long id){prefs.edit().putString("timeframe_mode",values[i]).apply();updateAutoSymbol();}});
+        r.addView(tf);
+        Button access=cyberButton("ENABLE AUTOMATIC RECOGNITION",BLUE); access.setOnClickListener(v->{
+            status.setText("Enable BUY SELL Signal Notifier in Accessibility."); startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));}); r.addView(access);
+        note(r,"AZ analyzes chart frames in memory. Screenshots, passwords and full screen text are not saved.");
+        return r;
     }
 
-    void slider(LinearLayout root,String label,String key,int min,int max,int def){
-        root.addView(tx(label,14,Color.WHITE));
-        SeekBar b=new SeekBar(this);
-        b.setMax(max-min);
-        b.setProgress(prefs.getInt(key,def)-min);
-        b.setTag(new Object[]{key,min});
-        b.setOnSeekBarChangeListener(new SimpleSeek(){
-            public void onProgressChanged(SeekBar s,int p,boolean u){
-                Object[] t=(Object[])s.getTag();
-                prefs.edit().putInt((String)t[0],p+(Integer)t[1]).apply();
-                labels();
-            }
-        });
-        root.addView(b);
+    LinearLayout buildControls(){
+        LinearLayout r=column(); section(r,"SIGNAL CONTROL");
+        addCheck(r,"Broker Board Learning", "broker_board_learning",true,CYAN);
+        addCheck(r,"Quick High-Confidence Decision", "quick_decision",true,Color.rgb(167,243,208));
+        addSeek(r,"Quick signal threshold","quick_decision_threshold",78,90,82,"%");
+        addCheck(r,"High Accuracy Mode", "high_accuracy",true,Color.WHITE);
+        addCheck(r,"Elite Precision Mode", "elite_mode",true,Color.rgb(167,243,208));
+        addCheck(r,"Sound + vibration alerts", "sound_alerts",true,Color.rgb(253,230,138));
+        addSeek(r,"Sound alert threshold","sound_alert_threshold",75,90,85,"%");
+        section(r,"SESSION SAFETY");
+        String[] sessions={"ALL","LONDON","NEW_YORK","OVERLAP","ASIA"};
+        String[] names={"All sessions","London","New York","London + New York overlap","Asia"};
+        Spinner session=spinner(names); int p=0; String saved=prefs.getString("session_filter","ALL");
+        for(int i=0;i<sessions.length;i++)if(sessions[i].equals(saved))p=i; session.setSelection(p);
+        session.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> x){}
+            public void onItemSelected(AdapterView<?> x,View v,int i,long id){prefs.edit().putString("session_filter",sessions[i]).apply();}}); r.addView(session);
+        Button lock=cyberButton("NEWS LOCK • 30 MINUTES",Color.rgb(251,191,36)); lock.setOnClickListener(v->{
+            prefs.edit().putLong("news_lock_until",System.currentTimeMillis()+30L*60L*1000L).apply();status.setText("News Lock active for 30 minutes.");}); r.addView(lock);
+        Button clear=cyberButton("CLEAR NEWS LOCK",BLUE); clear.setOnClickListener(v->{prefs.edit().putLong("news_lock_until",0L).apply();status.setText("News Lock cleared.");}); r.addView(clear);
+        section(r,"CHART CALIBRATION");
+        slider(r,"Left crop %","left",0,30,5); slider(r,"Top crop %","top",0,50,18);
+        slider(r,"Right crop %","right",70,100,96); slider(r,"Bottom crop %","bottom",55,100,80);
+        cropText=tx("",13,Color.rgb(203,213,225)); r.addView(cropText);
+        r.addView(tx("Candle colors",14,Color.WHITE),space(-1,-2,8));
+        Spinner theme=spinner(new String[]{"Auto (green vs red, UI-safe)","Green vs red","Blue vs red"});
+        theme.setSelection(prefs.getInt("theme",0)); theme.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> x){}
+            public void onItemSelected(AdapterView<?> x,View v,int i,long id){prefs.edit().putInt("theme",i).apply();}}); r.addView(theme);
+        r.addView(tx("AI signal threshold",14,Color.WHITE),space(-1,-2,10));
+        SeekBar sensitivity=new SeekBar(this); sensitivity.setMax(2); sensitivity.setProgress(prefs.getInt("sensitivity",1)); r.addView(sensitivity);
+        sensText=tx("",13,Color.rgb(203,213,225)); r.addView(sensText);
+        sensitivity.setOnSeekBarChangeListener(new SimpleSeek(){public void onProgressChanged(SeekBar s,int p,boolean u){prefs.edit().putInt("sensitivity",p).apply();labels();}});
+        return r;
     }
 
-    void labels(){
-        if(cropText!=null)
-            cropText.setText(String.format(Locale.US,
-                    "Crop: L%d%% T%d%% R%d%% B%d%%",
-                    prefs.getInt("left",5),prefs.getInt("top",18),
-                    prefs.getInt("right",96),prefs.getInt("bottom",80)));
-        if(sensText!=null){
-            String[] s={"More signals","Balanced","Stricter"};
-            sensText.setText(s[prefs.getInt("sensitivity",1)]);
-        }
+    LinearLayout buildTraining(){
+        LinearLayout r=column(); section(r,"AUTOMATIC TRAINING");
+        learnText=tx("",13,Color.rgb(203,213,225)); learnText.setPadding(dp(12),dp(12),dp(12),dp(12));
+        learnText.setBackground(cardBg(CYAN)); r.addView(learnText);
+        Button reset=cyberButton("RESET LEARNED CALIBRATION",Color.rgb(248,113,113));
+        reset.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("Reset learning?")
+                .setMessage("This clears calibration for the detected asset only.").setNegativeButton("Cancel",null)
+                .setPositiveButton("Reset",(d,w)->{learner.setAsset(currentDetectedAsset());learner.resetCurrentAsset();new TrainingStore(this).clearPending();updateLearning();updateDashboard();}).show()); r.addView(reset);
+        section(r,"TRAINING INFORMATION");
+        note(r,"Training stays automatic. AZ learns only from completed, exact-close outcomes and keeps local calibration active.");
+        note(r,"Shared learning sync validates anonymous numeric outcomes. No screenshots, credentials or Android identifiers are uploaded.");
+        note(r,"Confidence scores are estimates, not guaranteed win probabilities. AZ never places a trade automatically.");
+        return r;
     }
 
-    void startScan(){
-        if(Build.VERSION.SDK_INT<30){
-            status.setText("Visual candle scanning without screen sharing requires Android 11 or newer.");
-            return;
-        }
-        if(!AutoSymbolAccessibilityService.isConnected()){
-            pendingAccessibilityStart=true;
-            status.setText("Enable BUY SELL Signal Notifier in Accessibility, then return. No screen-share permission is needed.");
-            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-            return;
-        }
-        AutoSymbolAccessibilityService.setScannerEnabled(this,true);
-        status.setText("Floating TAP SCAN is active. Open the broker chart. AUTO follows the broker timeframe when detectable; otherwise choose M1–M5 on the main screen. Automatic mode scans candle-by-candle and retries failed frame captures before the entry boundary. Tap the round TAP SCAN button only when you want an extra immediate scan.");
+    LinearLayout buildUpdate(){
+        LinearLayout r=column(); section(r,"AZ APP UPDATE");
+        TextView current=tx("CURRENT VERSION  16.3",18,CYAN); current.setTypeface(null,Typeface.BOLD);
+        current.setGravity(Gravity.CENTER); current.setPadding(0,dp(25),0,dp(20)); r.addView(current);
+        updateManager=new AppUpdateManager(this,status);
+        Button update=cyberButton("CHECK / UPDATE APP",CYAN); update.setOnClickListener(v->updateManager.checkForUpdate(true)); r.addView(update);
+        CheckBox auto=new CheckBox(this); auto.setText("Automatically check on startup"); auto.setTextColor(Color.rgb(167,243,208));
+        auto.setChecked(prefs.getBoolean("auto_update_check",true)); auto.setOnCheckedChangeListener((b,c)->prefs.edit().putBoolean("auto_update_check",c).apply()); r.addView(auto);
+        note(r,"AZ will tell you when a newer version is ready. Android will ask you to confirm installation.");
+        return r;
     }
 
-    Button btn(String s){
-        Button b=new Button(this);
-        b.setText(s); b.setAllCaps(false);
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(52));
-        lp.setMargins(0,0,0,dp(8));
-        b.setLayoutParams(lp);
-        return b;
+    void showPage(int wanted){
+        int n=pager.getChildCount(), old=pager.getDisplayedChild(), next=(wanted+n)%n; if(next==old)return;
+        boolean forward=(wanted>old)||(old==n-1&&next==0);
+        pager.setInAnimation(AnimationUtils.loadAnimation(this,forward?android.R.anim.slide_in_left:android.R.anim.fade_in));
+        pager.setOutAnimation(AnimationUtils.loadAnimation(this,forward?android.R.anim.slide_out_right:android.R.anim.fade_out));
+        pager.setDisplayedChild(next); pageTitle.setText(pageNames[next]);
+        StringBuilder d=new StringBuilder(); for(int i=0;i<n;i++){if(i>0)d.append("  ");d.append(i==next?"●":"○");} pageDots.setText(d.toString());
+        if(next==0)updateDashboard(); if(next==3)updateLearning();
     }
 
-    TextView tx(String s,int sp,int c){
-        TextView t=new TextView(this);
-        t.setText(s); t.setTextSize(sp); t.setTextColor(c);
-        return t;
-    }
+    @Override protected void onResume(){ super.onResume(); if(learner!=null){learner.setAsset(currentDetectedAsset());updateLearning();updateDashboard();}
+        updateAutoSymbol(); CommunityLearningSync.refreshAndFlushAsync(this);
+        if(pendingAccessibilityStart&&AutoSymbolAccessibilityService.isConnected()){pendingAccessibilityStart=false;startScan();}}
+    @Override protected void onDestroy(){if(updateManager!=null)updateManager.destroy();super.onDestroy();}
 
-    int dp(int v){
-        return Math.round(v*getResources().getDisplayMetrics().density);
-    }
+    void updateDashboard(){ if(scoreValue==null)return; TrainingStore.MonthlyStats m=new TrainingStore(this).currentMonthStats();
+        scoreValue.setText(m.total()==0?"—":m.score()+"%"); winValue.setText(String.valueOf(m.wins)); lossValue.setText(String.valueOf(m.losses)); }
 
-    abstract class SimpleSeek implements SeekBar.OnSeekBarChangeListener{
-        public void onStartTrackingTouch(SeekBar b){}
-        public void onStopTrackingTouch(SeekBar b){}
-    }
+    String currentDetectedAsset(){String a=prefs==null?"":prefs.getString("detected_asset","");return a==null||a.trim().isEmpty()?"AUTO_CHART":a.trim();}
+    void updateAutoSymbol(){if(autoSymbolText==null)return;String a=currentDetectedAsset();String mode=prefs.getString("timeframe_mode","AUTO");String tf;
+        if(!"AUTO".equals(mode))tf=mode+" manual";else{String detected=prefs.getString("detected_timeframe","");long t=prefs.getLong("detected_timeframe_time",0L);
+            if(!detected.isEmpty()&&System.currentTimeMillis()-t<=30*60_000L){tf=detected+" auto";prefs.edit().putString("last_valid_timeframe",detected).apply();}
+            else{String fallback=prefs.getString("last_valid_timeframe","M1");if(!fallback.matches("M[1-5]"))fallback="M1";tf=fallback+" AUTO fallback";}}
+        autoSymbolText.setText("AUTO_CHART".equals(a)?"Detected chart: AUTO visual mode • "+tf:"Detected chart: "+a+" • "+tf);}
+
+    void updateLearning(){if(learnText==null)return;StringBuilder s=new StringBuilder();int all=learner.totalSamplesAll();TrainingStore store=new TrainingStore(this);
+        s.append("CHART  ").append(currentDetectedAsset()).append("\nRESOLVED  ").append(all).append("\nPENDING  ").append(store.pendingCount())
+                .append("\nSYNC  ").append(CommunityLearningSync.status(this)).append("\n\n");
+        for(int i=0;i<5;i++){int n=learner.totalSamples(i);s.append("M").append(i+1).append("  ").append(n).append(" samples");
+            if(n>0)s.append(" • ").append(learner.accuracyPct(i)).append("% all-time • ").append(learner.recentAccuracyPct(i)).append("% recent");
+            s.append("\n").append(learner.verification(i).summary());if(i<4)s.append("\n\n");}
+        s.append(all<150?"\n\nCalibration is still building.":"\n\nLearned calibration is active.");learnText.setText(s.toString());}
+
+    void startScan(){if(Build.VERSION.SDK_INT<30){status.setText("Android 11 or newer is required.");return;}
+        if(!AutoSymbolAccessibilityService.isConnected()){pendingAccessibilityStart=true;status.setText("Enable BUY SELL Signal Notifier in Accessibility.");startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));return;}
+        AutoSymbolAccessibilityService.setScannerEnabled(this,true);status.setText("SCANNER ACTIVE • Open the broker chart");}
+    void stopScan(){AutoSymbolAccessibilityService.setScannerEnabled(this,false);status.setText("SCANNER STOPPED");}
+
+    void addCheck(LinearLayout r,String label,String key,boolean def,int color){CheckBox c=new CheckBox(this);c.setText(label);c.setTextColor(color);c.setChecked(prefs.getBoolean(key,def));c.setOnCheckedChangeListener((b,v)->prefs.edit().putBoolean(key,v).apply());r.addView(c);}
+    void addSeek(LinearLayout r,String label,String key,int min,int max,int def,String suffix){TextView value=tx(label+": "+prefs.getInt(key,def)+suffix,14,Color.WHITE);r.addView(value);SeekBar b=new SeekBar(this);b.setMax(max-min);b.setProgress(prefs.getInt(key,def)-min);b.setOnSeekBarChangeListener(new SimpleSeek(){public void onProgressChanged(SeekBar s,int p,boolean u){int v=min+p;value.setText(label+": "+v+suffix);if(u)prefs.edit().putInt(key,v).apply();}});r.addView(b);}
+    void slider(LinearLayout r,String label,String key,int min,int max,int def){r.addView(tx(label,13,Color.WHITE));SeekBar b=new SeekBar(this);b.setMax(max-min);b.setProgress(prefs.getInt(key,def)-min);b.setOnSeekBarChangeListener(new SimpleSeek(){public void onProgressChanged(SeekBar s,int p,boolean u){prefs.edit().putInt(key,p+min).apply();labels();}});r.addView(b);}
+    void labels(){if(cropText!=null)cropText.setText(String.format(Locale.US,"Crop: L%d%% T%d%% R%d%% B%d%%",prefs.getInt("left",5),prefs.getInt("top",18),prefs.getInt("right",96),prefs.getInt("bottom",80)));if(sensText!=null){String[] s={"More signals","Balanced","Stricter"};sensText.setText(s[prefs.getInt("sensitivity",1)]);}}
+
+    ScrollView page(LinearLayout content){ScrollView s=new ScrollView(this);s.setFillViewport(true);s.addView(content);return s;}
+    LinearLayout column(){LinearLayout r=new LinearLayout(this);r.setOrientation(LinearLayout.VERTICAL);r.setPadding(dp(6),dp(4),dp(6),dp(24));return r;}
+    void section(LinearLayout r,String label){TextView t=tx(label,17,CYAN);t.setTypeface(null,Typeface.BOLD);t.setPadding(0,dp(14),0,dp(8));r.addView(t);}
+    void note(LinearLayout r,String text){TextView t=tx(text,12,Color.rgb(148,163,184));t.setPadding(dp(10),dp(9),dp(10),dp(9));t.setBackground(cardBg(BLUE));r.addView(t,space(-1,-2,8));}
+    Spinner spinner(String[] items){Spinner s=new Spinner(this);s.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,items));return s;}
+    Button cyberButton(String text,int color){Button b=new Button(this);b.setText(text);b.setAllCaps(false);b.setTextColor(Color.WHITE);b.setTypeface(null,Typeface.BOLD);b.setBackground(cardBg(color));b.setLayoutParams(space(-1,dp(54),9));return b;}
+    LinearLayout.LayoutParams space(int w,int h,int bottom){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(w,h);p.setMargins(0,0,0,dp(bottom));return p;}
+    TextView tx(String s,int sp,int c){TextView t=new TextView(this);t.setText(s);t.setTextSize(sp);t.setTextColor(c);return t;}
+    GradientDrawable cardBg(int stroke){GradientDrawable g=new GradientDrawable();g.setColor(CARD);g.setCornerRadius(dp(14));g.setStroke(dp(1),stroke);return g;}
+    GradientDrawable cyberBackground(){return new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{Color.rgb(2,6,23),Color.rgb(7,20,42),Color.rgb(3,7,18)});}
+    int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
+    abstract class SimpleSeek implements SeekBar.OnSeekBarChangeListener{public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){}}
 }
