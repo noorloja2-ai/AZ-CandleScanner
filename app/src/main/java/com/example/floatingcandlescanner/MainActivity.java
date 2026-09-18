@@ -21,7 +21,7 @@ public class MainActivity extends Activity {
     private static final int CARD=Color.rgb(10,24,47);
     SharedPreferences prefs;
     TextView status,cropText,sensText,learnText,autoSymbolText,pageTitle,pageDots;
-    TextView scoreValue,winValue,lossValue;
+    TextView scoreValue,lossScoreValue;
     OnlineLearner learner;
     AppUpdateManager updateManager;
     ViewFlipper pager;
@@ -80,7 +80,7 @@ public class MainActivity extends Activity {
         h.addView(logo,new LinearLayout.LayoutParams(dp(66),dp(66)));
         LinearLayout words=new LinearLayout(this); words.setOrientation(LinearLayout.VERTICAL);
         TextView brand=tx("AZ  NEURAL SCANNER",19,Color.WHITE); brand.setTypeface(null,Typeface.BOLD);
-        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.3",11,CYAN);
+        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.4",11,CYAN);
         words.addView(brand); words.addView(sub); h.addView(words,new LinearLayout.LayoutParams(0,-2,1));
         return h;
     }
@@ -90,8 +90,8 @@ public class MainActivity extends Activity {
         TextView hero=tx("PERFORMANCE MATRIX",20,Color.WHITE); hero.setTypeface(null,Typeface.BOLD);
         hero.setGravity(Gravity.CENTER); hero.setPadding(0,dp(12),0,dp(14)); r.addView(hero);
         LinearLayout metrics=new LinearLayout(this); metrics.setOrientation(LinearLayout.HORIZONTAL);
-        scoreValue=metric(metrics,"WIN SCORE",CYAN); winValue=metric(metrics,"MONTHLY PROFIT",Color.rgb(74,222,128));
-        lossValue=metric(metrics,"MONTHLY LOSS",Color.rgb(248,113,113)); r.addView(metrics);
+        scoreValue=metric(metrics,"WIN SCORE",Color.rgb(74,222,128));
+        lossScoreValue=metric(metrics,"LOSS SCORE",Color.rgb(248,113,113)); r.addView(metrics);
         status=tx("SYSTEM READY",13,Color.rgb(134,239,172)); status.setGravity(Gravity.CENTER);
         status.setPadding(dp(10),dp(14),dp(10),dp(14)); status.setBackground(cardBg(CYAN)); r.addView(status,space(-1,-2,12));
         Button start=cyberButton("START FLOATING TAP SCAN",CYAN); start.setOnClickListener(v->startScan()); r.addView(start);
@@ -114,13 +114,6 @@ public class MainActivity extends Activity {
         LinearLayout r=column(); section(r,"FLOATING SCANNER");
         Button start=cyberButton("START FLOATING TAP SCAN",CYAN); start.setOnClickListener(v->startScan()); r.addView(start);
         Button stop=cyberButton("STOP SCAN",Color.rgb(248,113,113)); stop.setOnClickListener(v->stopScan()); r.addView(stop);
-        section(r,"BROKER / LOGIN");
-        EditText url=new EditText(this); url.setSingleLine(true); url.setTextColor(Color.WHITE);
-        url.setHintTextColor(Color.GRAY); url.setText(prefs.getString("broker_url","https://pocketoption.com/"));
-        r.addView(url,new LinearLayout.LayoutParams(-1,dp(52)));
-        Button open=cyberButton("OPEN BROKER",BLUE); open.setOnClickListener(v->{
-            String x=url.getText().toString().trim(); if(!x.isEmpty())prefs.edit().putString("broker_url",x).apply();
-            startActivity(new Intent(this,BrokerActivity.class)); }); r.addView(open);
         section(r,"AUTOMATIC CHART RECOGNITION");
         autoSymbolText=tx("Detected chart: checking…",14,Color.rgb(167,243,208)); r.addView(autoSymbolText,space(-1,-2,8));
         String[] values={"AUTO","M1","M2","M3","M4","M5"};
@@ -187,7 +180,7 @@ public class MainActivity extends Activity {
 
     LinearLayout buildUpdate(){
         LinearLayout r=column(); section(r,"AZ APP UPDATE");
-        TextView current=tx("CURRENT VERSION  16.3",18,CYAN); current.setTypeface(null,Typeface.BOLD);
+        TextView current=tx("CURRENT VERSION  16.4",18,CYAN); current.setTypeface(null,Typeface.BOLD);
         current.setGravity(Gravity.CENTER); current.setPadding(0,dp(25),0,dp(20)); r.addView(current);
         updateManager=new AppUpdateManager(this,status);
         Button update=cyberButton("CHECK / UPDATE APP",CYAN); update.setOnClickListener(v->updateManager.checkForUpdate(true)); r.addView(update);
@@ -213,7 +206,8 @@ public class MainActivity extends Activity {
     @Override protected void onDestroy(){if(updateManager!=null)updateManager.destroy();super.onDestroy();}
 
     void updateDashboard(){ if(scoreValue==null)return; TrainingStore.MonthlyStats m=new TrainingStore(this).currentMonthStats();
-        scoreValue.setText(m.total()==0?"—":m.score()+"%"); winValue.setText(String.valueOf(m.wins)); lossValue.setText(String.valueOf(m.losses)); }
+        scoreValue.setText(m.total()==0?"—":m.score()+"%");
+        lossScoreValue.setText(m.total()==0?"—":(100-m.score())+"%"); }
 
     String currentDetectedAsset(){String a=prefs==null?"":prefs.getString("detected_asset","");return a==null||a.trim().isEmpty()?"AUTO_CHART":a.trim();}
     void updateAutoSymbol(){if(autoSymbolText==null)return;String a=currentDetectedAsset();String mode=prefs.getString("timeframe_mode","AUTO");String tf;
