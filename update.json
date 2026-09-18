@@ -1,6 +1,6 @@
 {
-  "version": "16.3",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.3/CandleScanner_v16.3.apk",
-  "apkName": "CandleScanner_v16.3.apk",
-  "notes": "New cyber-style swipe dashboard with win score, monthly profit/loss counts, scanner, controls, training and update pages. Developer details are hidden. Existing learning, signals, notifications and market-status features remain active."
+  "version": "16.4",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.4/CandleScanner_v16.4.apk",
+  "apkName": "CandleScanner_v16.4.apk",
+  "notes": "Dashboard now shows WIN SCORE and LOSS SCORE. Monthly profit/loss counters and the broker login section were removed. All scanner, learning, notification and market-status features remain active."
 }
