@@ -1,7 +1,7 @@
 {
   "schema": 2,
-  "version": "ai-control-1",
-  "generated_at": "2026-09-17T12:30:00Z",
-  "max_weight": 0.20,
+  "version": "gateway-2026-09-18",
+  "generated_at": "2026-09-18T11:27:01.220Z",
+  "max_weight": 0.2,
   "assets": {}
 }
