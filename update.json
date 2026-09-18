@@ -1,6 +1,6 @@
 {
-  "version": "16.1",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.1/CandleScanner_v16.1.apk",
-  "apkName": "CandleScanner_v16.1.apk",
-  "notes": "Automatic completed-candle BUY/SELL popups now appear for confidence scores of 70% or higher. Sound remains controlled separately by the selected sound threshold. Confidence titles and all other signal information are unchanged."
+  "version": "16.2",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.2/CandleScanner_v16.2.apk",
+  "apkName": "CandleScanner_v16.2.apk",
+  "notes": "Long-press the floating AZ logo to see VERY STRONG, BEST, GOOD or POOR market conditions and the reason. Existing learning, BUY/SELL signals, notifications, sound thresholds and all settings remain unchanged."
 }
