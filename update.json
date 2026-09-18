@@ -1,6 +1,6 @@
 {
-  "version": "16.2",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.2/CandleScanner_v16.2.apk",
-  "apkName": "CandleScanner_v16.2.apk",
-  "notes": "Long-press the floating AZ logo to see VERY STRONG, BEST, GOOD or POOR market conditions and the reason. Existing learning, BUY/SELL signals, notifications, sound thresholds and all settings remain unchanged."
+  "version": "16.3",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.3/CandleScanner_v16.3.apk",
+  "apkName": "CandleScanner_v16.3.apk",
+  "notes": "New cyber-style swipe dashboard with win score, monthly profit/loss counts, scanner, controls, training and update pages. Developer details are hidden. Existing learning, signals, notifications and market-status features remain active."
 }
