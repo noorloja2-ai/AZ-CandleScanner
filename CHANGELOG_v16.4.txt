@@ -1,0 +1,8 @@
+AZ CandleScanner v16.4 — Score Dashboard Cleanup
+
+- Dashboard now shows WIN SCORE and LOSS SCORE.
+- Scores are calculated from real resolved outcomes on this device.
+- Removed MONTHLY PROFIT and MONTHLY LOSS counters.
+- Removed the broker URL/login section from the app.
+- Preserves the scanner, local and shared learning, Cloudflare synchronization, Verified Range protections, notifications, floating AZ logo, market-condition long press, signal thresholds and signed automatic updates.
+- Does not place trades automatically.

@@ -1,7 +1,7 @@
-name: Build v16.3 preview APK
+name: Build v16.4 preview APK
 on:
   push:
-    branches: [ cyber-dashboard-v16.3 ]
+    branches: [ score-cleanup-v16.4 ]
   workflow_dispatch:
 jobs:
   build:
@@ -26,8 +26,8 @@ jobs:
           AZ_KEY_ALIAS: candlescanner
           AZ_KEY_PASSWORD: ${{ secrets.AZ_KEY_PASSWORD }}
         run: gradle :app:assembleRelease --stacktrace
-      - run: cp app/build/outputs/apk/release/app-release.apk CandleScanner_v16.3_PREVIEW.apk
+      - run: cp app/build/outputs/apk/release/app-release.apk CandleScanner_v16.4_PREVIEW.apk
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: CandleScanner-v16.3-preview-signed
-          path: CandleScanner_v16.3_PREVIEW.apk
+          name: CandleScanner-v16.4-preview-signed
+          path: CandleScanner_v16.4_PREVIEW.apk
