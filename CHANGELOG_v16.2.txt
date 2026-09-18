@@ -1,0 +1,11 @@
+AZ CandleScanner v16.2 — Market Condition Status
+
+- Long-press the floating AZ logo to see the current market condition.
+- Adds four clear levels: VERY STRONG, BEST, GOOD and POOR.
+- Shows the reason: market not moving/sideways, unstable volatility, weak or conflicting conditions, acceptable movement, suitable conditions, or full confirmation agreement.
+- Uses the latest visible candle-board analysis immediately without delaying the existing scan.
+- The information panel remains open until CLOSE is pressed.
+- Preserves automatic self-learning, shared learning upload/download, BUY/SELL signals, confidence titles, notifications, sound thresholds, update settings and broker settings.
+- Does not place trades automatically.
+
+Market condition describes chart quality only. It is not a guaranteed winning signal.
