@@ -1,0 +1,12 @@
+AZ CandleScanner v16.3 — Cyber Swipe Dashboard
+
+- New cyber-style five-page interface: Overview, Scanner, Controls, Training and Update.
+- Swipe left or right to change pages.
+- Overview shows real current-month win score, profitable outcomes and losing outcomes from resolved learning records.
+- Start Floating Tap Scan and Stop Scan are immediately available.
+- Training and update information are separated into clean dedicated pages.
+- Developer, repository and signing-certificate explanations are no longer shown to users.
+- Preserves automatic learning, Cloudflare/shared learning sync, BUY/SELL signals, floating AZ logo, notifications, confidence titles, market-condition long press, broker settings and all scanner controls.
+- Does not place trades automatically.
+
+Performance figures are based on resolved on-device outcomes and are not a guarantee of future results.
