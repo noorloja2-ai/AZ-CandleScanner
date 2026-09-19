@@ -21,7 +21,7 @@ public class MainActivity extends Activity {
     private static final int CARD=Color.rgb(10,24,47);
     SharedPreferences prefs;
     TextView status,cropText,sensText,learnText,autoSymbolText;
-    TextView scoreValue,lossScoreValue;
+    TextView scoreValue,lossScoreValue,userTradeCountValue;
     OnlineLearner learner;
     AppUpdateManager updateManager;
     ViewFlipper pager;
@@ -82,11 +82,14 @@ public class MainActivity extends Activity {
 
     LinearLayout buildOverview(){
         LinearLayout r=column();
-        TextView hero=tx("PERFORMANCE MATRIX",20,Color.WHITE); hero.setTypeface(null,Typeface.BOLD);
-        hero.setGravity(Gravity.CENTER); hero.setPadding(0,dp(12),0,dp(14)); r.addView(hero);
+        TextView hero=tx("YOUR PERFORMANCE MATRIX",20,Color.WHITE); hero.setTypeface(null,Typeface.BOLD);
+        hero.setGravity(Gravity.CENTER); hero.setPadding(0,dp(12),0,dp(4)); r.addView(hero);
+        TextView personal=tx("PERSONAL • THIS DEVICE • CURRENT MONTH",11,CYAN);
+        personal.setGravity(Gravity.CENTER); personal.setPadding(0,0,0,dp(12)); r.addView(personal);
         LinearLayout metrics=new LinearLayout(this); metrics.setOrientation(LinearLayout.HORIZONTAL);
-        scoreValue=metric(metrics,"WIN SCORE",Color.rgb(74,222,128));
-        lossScoreValue=metric(metrics,"LOSS SCORE",Color.rgb(248,113,113)); r.addView(metrics);
+        scoreValue=metric(metrics,"YOUR WIN %",Color.rgb(74,222,128));
+        lossScoreValue=metric(metrics,"YOUR LOSS %",Color.rgb(248,113,113));
+        userTradeCountValue=metric(metrics,"YOUR RESULTS",CYAN); r.addView(metrics);
         status=tx("SYSTEM READY",13,Color.rgb(134,239,172)); status.setGravity(Gravity.CENTER);
         status.setPadding(dp(10),dp(14),dp(10),dp(14)); status.setBackground(cardBg(CYAN)); r.addView(status,space(-1,-2,12));
         Button start=cyberButton("START FLOATING TAP SCAN",CYAN); start.setOnClickListener(v->startScan()); r.addView(start);
@@ -205,7 +208,8 @@ public class MainActivity extends Activity {
 
     void updateDashboard(){ if(scoreValue==null)return; TrainingStore.MonthlyStats m=new TrainingStore(this).currentMonthStats();
         scoreValue.setText(m.total()==0?"—":m.score()+"%");
-        lossScoreValue.setText(m.total()==0?"—":(100-m.score())+"%"); }
+        lossScoreValue.setText(m.total()==0?"—":(100-m.score())+"%");
+        if(userTradeCountValue!=null)userTradeCountValue.setText(String.valueOf(m.total())); }
 
     String currentDetectedAsset(){String a=prefs==null?"":prefs.getString("detected_asset","");return a==null||a.trim().isEmpty()?"AUTO_CHART":a.trim();}
     void updateAutoSymbol(){if(autoSymbolText==null)return;String a=currentDetectedAsset();String mode=prefs.getString("timeframe_mode","AUTO");String tf;
