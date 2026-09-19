@@ -1,7 +1,7 @@
 {
-  "version": "16.4.3",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.4/CandleScanner_v16.4.apk",
-  "apkName": "CandleScanner_v16.4.apk",
-  "notes": "V16.4 personal performance matrix: Overview now shows YOUR WIN %, YOUR LOSS %, and YOUR RESULTS using only resolved outcomes saved on that individual user's device for the current month. Community learning is not counted in personal performance. Automatic chart calibration and all existing features remain active.",
-  "build": 72
+  "version": "16.5",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.5/CandleScanner_v16.5.apk",
+  "apkName": "CandleScanner_v16.5.apk",
+  "notes": "V16.5 cyber interface refresh: dark menus with white options, licence expiry Overview, one Start/Shutdown control, white Scanner and Controls selections, and developer support details. Scanner, training, licence, and learning functions remain active.",
+  "build": 73
 }
