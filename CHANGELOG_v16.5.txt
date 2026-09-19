@@ -1,0 +1,8 @@
+AZ CandleScanner v16.5
+
+- Dark cyber-styled navigation and option menus with white text.
+- Overview now focuses on the licence expiry date and remaining time.
+- One Overview button changes between START SCANNER and SHUTDOWN SCANNER.
+- Scanner timeframe and Controls session/candle-colour options use white text.
+- Added developer and support contact details.
+- Preserved scanner, controls, training, licence, and learning functions.
