@@ -30,6 +30,9 @@ public final class LicenseManager {
     public static boolean cachedValid(Context c){
         return c.getSharedPreferences(PREF,Context.MODE_PRIVATE).getLong("expires_at",0)>System.currentTimeMillis();
     }
+    public static long expiresAt(Context c){
+        return c.getSharedPreferences(PREF,Context.MODE_PRIVATE).getLong("expires_at",0);
+    }
     public static void save(Context c,String key,long expiresAt){
         c.getSharedPreferences(PREF,Context.MODE_PRIVATE).edit()
                 .putString("key",key).putLong("expires_at",expiresAt).apply();
