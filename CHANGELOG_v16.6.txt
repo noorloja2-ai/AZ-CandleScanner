@@ -1,0 +1,6 @@
+AZ CandleScanner v16.6
+
+- Added Monthly Profit/Win Score, Loss Score, and total resolved results.
+- Added Yearly Profit/Win Score, Loss Score, and total resolved results.
+- Scores use only completed outcomes stored on the user's device.
+- Preserved licence expiry, Start/Shutdown control, scanner, training, and learning.
