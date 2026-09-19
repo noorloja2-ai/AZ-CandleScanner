@@ -1,0 +1,15 @@
+plugins { id 'com.android.application' }
+android {
+ namespace 'com.example.azlicensegenerator'; compileSdk 35
+ defaultConfig { applicationId 'com.example.azlicensegenerator'; minSdk 26; targetSdk 35; versionCode 1; versionName '1.0' }
+ signingConfigs {
+  permanent {
+   storeFile file(System.getenv('AZ_KEYSTORE_PATH') ?: '../candlescanner-permanent.jks')
+   storePassword System.getenv('AZ_KEYSTORE_PASSWORD')
+   keyAlias System.getenv('AZ_KEY_ALIAS') ?: 'candlescanner'
+   keyPassword System.getenv('AZ_KEY_PASSWORD')
+  }
+ }
+ buildTypes { release { signingConfig signingConfigs.permanent; minifyEnabled false } }
+ compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
