@@ -22,7 +22,9 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         LinearLayout r=new LinearLayout(this);r.setOrientation(LinearLayout.VERTICAL);
-        r.setPadding(dp(22),dp(30),dp(22),dp(24));r.setBackgroundColor(Color.rgb(2,6,23));
+        r.setPadding(dp(22),dp(24),dp(22),dp(24));r.setBackgroundColor(Color.rgb(2,6,23));
+        ImageView logo=new ImageView(this);logo.setImageResource(R.mipmap.ic_launcher);logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams logoLp=new LinearLayout.LayoutParams(dp(96),dp(96));logoLp.gravity=Gravity.CENTER_HORIZONTAL;logoLp.setMargins(0,0,0,dp(10));r.addView(logo,logoLp);
         TextView title=text("AZ LICENCE GENERATOR",23,Color.rgb(34,211,238));title.setTypeface(null,Typeface.BOLD);r.addView(title,lp(16));
         r.addView(text("Private administrator app • Generate 1–12 month keys",13,Color.LTGRAY),lp(18));
         token=new EditText(this);token.setHint("Cloudflare admin token");token.setSingleLine(true);
