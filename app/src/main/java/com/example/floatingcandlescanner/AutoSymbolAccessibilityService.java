@@ -444,15 +444,49 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         takeScreenshot(Display.DEFAULT_DISPLAY,ex,cb);
     }
 
+    private CandleVision.Analysis analyzeWithAutoCalibration(Bitmap b){
+        int theme=prefs.getInt("theme",0), sensitivity=prefs.getInt("sensitivity",1);
+        boolean highAccuracy=prefs.getBoolean("high_accuracy",true);
+        int savedL=prefs.getInt("left",5), savedT=prefs.getInt("top",18);
+        int savedR=prefs.getInt("right",96), savedB=prefs.getInt("bottom",80);
+        boolean force=prefs.getBoolean("force_auto_calibration",false);
+        CandleVision.Analysis best=CandleVision.analyze(
+                b,savedL,savedT,savedR,savedB,theme,sensitivity,learner,highAccuracy);
+        int bestScore=calibrationScore(best);
+        if(!force && bestScore>=108)return best;
+
+        // Candidate windows cover common portrait broker layouts. CandleVision
+        // independently removes wide BUY/SELL controls from the chosen region.
+        int[][] candidates={
+                {2,8,98,90},{3,12,97,86},{5,18,96,80},
+                {6,22,95,78},{2,16,98,76},{8,12,94,82}
+        };
+        int[] chosen={savedL,savedT,savedR,savedB};
+        for(int[] box:candidates){
+            if(box[0]==savedL&&box[1]==savedT&&box[2]==savedR&&box[3]==savedB)continue;
+            CandleVision.Analysis trial=CandleVision.analyze(
+                    b,box[0],box[1],box[2],box[3],theme,sensitivity,learner,highAccuracy);
+            int score=calibrationScore(trial);
+            if(score>bestScore){best=trial;bestScore=score;chosen=box;}
+        }
+        if(bestScore>=108){
+            prefs.edit().putInt("left",chosen[0]).putInt("top",chosen[1])
+                    .putInt("right",chosen[2]).putInt("bottom",chosen[3])
+                    .putBoolean("force_auto_calibration",false)
+                    .putLong("auto_calibrated_at",System.currentTimeMillis()).apply();
+        }
+        return best;
+    }
+
+    private int calibrationScore(CandleVision.Analysis a){
+        if(a==null)return 0;
+        return (a.valid?100:0)+Math.max(0,a.detectedBins);
+    }
+
     private boolean analyzeBitmap(Bitmap b,boolean liveRefresh,boolean automatic,long targetBoundary){
         String asset=currentAsset();
         learner.setAsset(asset);
-        CandleVision.Analysis a=CandleVision.analyze(
-                b,
-                prefs.getInt("left",5),prefs.getInt("top",18),
-                prefs.getInt("right",96),prefs.getInt("bottom",80),
-                prefs.getInt("theme",0),prefs.getInt("sensitivity",1),
-                learner,prefs.getBoolean("high_accuracy",true));
+        CandleVision.Analysis a=analyzeWithAutoCalibration(b);
         if(a==null||!a.valid||a.detectedBins<8){
             if(liveRefresh)showLiveStatus("AI LIVE • FINDING CANDLES");
             else showUnavailable("FINDING CANDLES");
