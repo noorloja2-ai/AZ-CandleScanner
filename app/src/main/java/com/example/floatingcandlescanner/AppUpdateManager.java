@@ -76,6 +76,7 @@ public final class AppUpdateManager {
             JSONObject manifest = new JSONObject(trimmed);
 
             String latestVersion = normalizeVersion(manifest.optString("version", ""));
+            int latestBuild = manifest.optInt("build", 0);
             String apkUrl = manifest.optString("apkUrl", "").trim();
             String apkFileId = manifest.optString("apkFileId", "").trim();
             String apkName = manifest.optString("apkName", "").trim();
@@ -85,10 +86,11 @@ public final class AppUpdateManager {
             }
 
             final String fVersion = latestVersion;
+            final int fBuild = latestBuild;
             final String fUrl = apkUrl;
             final String fName = apkName;
             final String fNotes = notes;
-            activity.runOnUiThread(() -> handleRelease(fVersion, fUrl, fName, fNotes, showNoUpdateMessage));
+            activity.runOnUiThread(() -> handleRelease(fVersion, fBuild, fUrl, fName, fNotes, showNoUpdateMessage));
             return true;
         } catch (Exception ignored) {
             return false;
@@ -106,14 +108,17 @@ public final class AppUpdateManager {
         return body.toString();
     }
 
-    private void handleRelease(String latestVersion, String apkUrl, String apkName,
+    private void handleRelease(String latestVersion, int latestBuild, String apkUrl, String apkName,
                                String notes, boolean showNoUpdateMessage) {
         String current = BuildConfig.VERSION_NAME;
+        int currentBuild = BuildConfig.VERSION_CODE;
         if (latestVersion.isEmpty()) {
             setStatus("Update server did not provide a version number.");
             return;
         }
-        if (compareVersions(latestVersion, current) <= 0) {
+        int versionCompare = compareVersions(latestVersion, current);
+        boolean newer = versionCompare > 0 || (versionCompare == 0 && latestBuild > currentBuild);
+        if (!newer) {
             setStatus("App is up to date — v" + current + ".");
             if (showNoUpdateMessage) toast("You already have the latest version.");
             return;
