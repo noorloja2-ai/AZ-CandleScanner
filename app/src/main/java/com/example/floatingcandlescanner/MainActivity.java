@@ -143,10 +143,13 @@ public class MainActivity extends Activity {
         Button lock=cyberButton("NEWS LOCK • 30 MINUTES",Color.rgb(251,191,36)); lock.setOnClickListener(v->{
             prefs.edit().putLong("news_lock_until",System.currentTimeMillis()+30L*60L*1000L).apply();status.setText("News Lock active for 30 minutes.");}); r.addView(lock);
         Button clear=cyberButton("CLEAR NEWS LOCK",BLUE); clear.setOnClickListener(v->{prefs.edit().putLong("news_lock_until",0L).apply();status.setText("News Lock cleared.");}); r.addView(clear);
-        section(r,"CHART CALIBRATION");
-        slider(r,"Left crop %","left",0,30,5); slider(r,"Top crop %","top",0,50,18);
-        slider(r,"Right crop %","right",70,100,96); slider(r,"Bottom crop %","bottom",55,100,80);
-        cropText=tx("",13,Color.rgb(203,213,225)); r.addView(cropText);
+        section(r,"AUTOMATIC CHART CALIBRATION");
+        prefs.edit().putBoolean("auto_calibration",true).apply();
+        cropText=tx("AUTO • AZ detects the usable chart area during every scan.",13,Color.rgb(167,243,208));
+        cropText.setPadding(dp(10),dp(10),dp(10),dp(10)); cropText.setBackground(cardBg(CYAN)); r.addView(cropText,space(-1,-2,10));
+        Button recalibrate=cyberButton("RECALIBRATE ON NEXT SCAN",BLUE);
+        recalibrate.setOnClickListener(v->{prefs.edit().putBoolean("force_auto_calibration",true).apply();status.setText("Automatic chart recalibration is ready.");});
+        r.addView(recalibrate);
         r.addView(tx("Candle colors",14,Color.WHITE),space(-1,-2,8));
         Spinner theme=spinner(new String[]{"Auto (green vs red, UI-safe)","Green vs red","Blue vs red"});
         theme.setSelection(prefs.getInt("theme",0)); theme.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> x){}
@@ -227,7 +230,7 @@ public class MainActivity extends Activity {
     void addCheck(LinearLayout r,String label,String key,boolean def,int color){CheckBox c=new CheckBox(this);c.setText(label);c.setTextColor(color);c.setChecked(prefs.getBoolean(key,def));c.setOnCheckedChangeListener((b,v)->prefs.edit().putBoolean(key,v).apply());r.addView(c);}
     void addSeek(LinearLayout r,String label,String key,int min,int max,int def,String suffix){TextView value=tx(label+": "+prefs.getInt(key,def)+suffix,14,Color.WHITE);r.addView(value);SeekBar b=new SeekBar(this);b.setMax(max-min);b.setProgress(prefs.getInt(key,def)-min);b.setOnSeekBarChangeListener(new SimpleSeek(){public void onProgressChanged(SeekBar s,int p,boolean u){int v=min+p;value.setText(label+": "+v+suffix);if(u)prefs.edit().putInt(key,v).apply();}});r.addView(b);}
     void slider(LinearLayout r,String label,String key,int min,int max,int def){r.addView(tx(label,13,Color.WHITE));SeekBar b=new SeekBar(this);b.setMax(max-min);b.setProgress(prefs.getInt(key,def)-min);b.setOnSeekBarChangeListener(new SimpleSeek(){public void onProgressChanged(SeekBar s,int p,boolean u){prefs.edit().putInt(key,p+min).apply();labels();}});r.addView(b);}
-    void labels(){if(cropText!=null)cropText.setText(String.format(Locale.US,"Crop: L%d%% T%d%% R%d%% B%d%%",prefs.getInt("left",5),prefs.getInt("top",18),prefs.getInt("right",96),prefs.getInt("bottom",80)));if(sensText!=null){String[] s={"More signals","Balanced","Stricter"};sensText.setText(s[prefs.getInt("sensitivity",1)]);}}
+    void labels(){if(cropText!=null)cropText.setText("AUTO • AZ detects the usable chart area during every scan.");if(sensText!=null){String[] s={"More signals","Balanced","Stricter"};sensText.setText(s[prefs.getInt("sensitivity",1)]);}}
 
     ScrollView page(LinearLayout content){ScrollView s=new ScrollView(this);s.setFillViewport(true);s.addView(content);return s;}
     LinearLayout column(){LinearLayout r=new LinearLayout(this);r.setOrientation(LinearLayout.VERTICAL);r.setPadding(dp(6),dp(4),dp(6),dp(24));return r;}
