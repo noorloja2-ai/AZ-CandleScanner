@@ -6,6 +6,7 @@ import android.content.*;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.*;
 import android.provider.Settings;
@@ -13,6 +14,8 @@ import android.view.*;
 import android.view.animation.AnimationUtils;
 import android.widget.*;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Locale;
 
 /** Cyber dashboard. Use the top menu to open each user-facing page. */
@@ -21,7 +24,8 @@ public class MainActivity extends Activity {
     private static final int CARD=Color.rgb(10,24,47);
     SharedPreferences prefs;
     TextView status,cropText,sensText,learnText,autoSymbolText;
-    TextView scoreValue,lossScoreValue,userTradeCountValue;
+    TextView licenceExpiryText;
+    Button overviewToggle;
     OnlineLearner learner;
     AppUpdateManager updateManager;
     ViewFlipper pager;
@@ -75,37 +79,26 @@ public class MainActivity extends Activity {
         h.addView(logo,new LinearLayout.LayoutParams(dp(66),dp(66)));
         LinearLayout words=new LinearLayout(this); words.setOrientation(LinearLayout.VERTICAL);
         TextView brand=tx("AZ  NEURAL SCANNER",19,Color.WHITE); brand.setTypeface(null,Typeface.BOLD);
-        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.4",11,CYAN);
+        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.5",11,CYAN);
         words.addView(brand); words.addView(sub); h.addView(words,new LinearLayout.LayoutParams(0,-2,1));
         return h;
     }
 
     LinearLayout buildOverview(){
         LinearLayout r=column();
-        TextView hero=tx("YOUR PERFORMANCE MATRIX",20,Color.WHITE); hero.setTypeface(null,Typeface.BOLD);
-        hero.setGravity(Gravity.CENTER); hero.setPadding(0,dp(12),0,dp(4)); r.addView(hero);
-        TextView personal=tx("PERSONAL • THIS DEVICE • CURRENT MONTH",11,CYAN);
-        personal.setGravity(Gravity.CENTER); personal.setPadding(0,0,0,dp(12)); r.addView(personal);
-        LinearLayout metrics=new LinearLayout(this); metrics.setOrientation(LinearLayout.HORIZONTAL);
-        scoreValue=metric(metrics,"YOUR WIN %",Color.rgb(74,222,128));
-        lossScoreValue=metric(metrics,"YOUR LOSS %",Color.rgb(248,113,113));
-        userTradeCountValue=metric(metrics,"YOUR RESULTS",CYAN); r.addView(metrics);
+        TextView hero=tx("LICENCE EXPIRY",20,Color.WHITE); hero.setTypeface(null,Typeface.BOLD);
+        hero.setGravity(Gravity.CENTER); hero.setPadding(0,dp(18),0,dp(12)); r.addView(hero);
+        licenceExpiryText=tx("Checking licence…",18,Color.WHITE);
+        licenceExpiryText.setTypeface(null,Typeface.BOLD); licenceExpiryText.setGravity(Gravity.CENTER);
+        licenceExpiryText.setPadding(dp(12),dp(22),dp(12),dp(22));
+        licenceExpiryText.setBackground(cardBg(CYAN)); r.addView(licenceExpiryText,space(-1,-2,14));
         status=tx("SYSTEM READY",13,Color.rgb(134,239,172)); status.setGravity(Gravity.CENTER);
-        status.setPadding(dp(10),dp(14),dp(10),dp(14)); status.setBackground(cardBg(CYAN)); r.addView(status,space(-1,-2,12));
-        Button start=cyberButton("START FLOATING TAP SCAN",CYAN); start.setOnClickListener(v->startScan()); r.addView(start);
-        Button stop=cyberButton("STOP SCAN",Color.rgb(248,113,113)); stop.setOnClickListener(v->stopScan()); r.addView(stop);
-        TextView hint=tx("Use the top menu to open scanner, controls, training and updates.",12,Color.rgb(148,163,184));
-        hint.setGravity(Gravity.CENTER); hint.setPadding(0,dp(14),0,0); r.addView(hint);
+        status.setPadding(dp(10),dp(12),dp(10),dp(12)); status.setBackground(cardBg(BLUE)); r.addView(status,space(-1,-2,12));
+        overviewToggle=cyberButton("START SCANNER",CYAN);
+        overviewToggle.setOnClickListener(v->{if(scannerActive())stopScan();else startScan();}); r.addView(overviewToggle);
+        TextView developer=tx("Developed by Anamul Hossain\nSupport: anamul00pt@gmail.com",12,Color.WHITE);
+        developer.setGravity(Gravity.CENTER); developer.setPadding(dp(10),dp(20),dp(10),dp(10)); r.addView(developer);
         return r;
-    }
-
-    TextView metric(LinearLayout parent,String label,int color){
-        LinearLayout c=new LinearLayout(this); c.setOrientation(LinearLayout.VERTICAL); c.setGravity(Gravity.CENTER);
-        c.setPadding(dp(5),dp(15),dp(5),dp(15)); c.setBackground(cardBg(color));
-        TextView value=tx("0",25,color); value.setTypeface(null,Typeface.BOLD); value.setGravity(Gravity.CENTER);
-        TextView name=tx(label,9,Color.rgb(203,213,225)); name.setGravity(Gravity.CENTER);
-        c.addView(value); c.addView(name); LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(96),1);
-        lp.setMargins(dp(3),0,dp(3),dp(12)); parent.addView(c,lp); return value;
     }
 
     LinearLayout buildScanner(){
@@ -181,7 +174,7 @@ public class MainActivity extends Activity {
 
     LinearLayout buildUpdate(){
         LinearLayout r=column(); section(r,"AZ APP UPDATE");
-        TextView current=tx("CURRENT VERSION  16.4",18,CYAN); current.setTypeface(null,Typeface.BOLD);
+        TextView current=tx("CURRENT VERSION  16.5",18,CYAN); current.setTypeface(null,Typeface.BOLD);
         current.setGravity(Gravity.CENTER); current.setPadding(0,dp(25),0,dp(20)); r.addView(current);
         updateManager=new AppUpdateManager(this,status);
         Button update=cyberButton("CHECK / UPDATE APP",CYAN); update.setOnClickListener(v->updateManager.checkForUpdate(true)); r.addView(update);
@@ -206,10 +199,22 @@ public class MainActivity extends Activity {
         if(pendingAccessibilityStart&&AutoSymbolAccessibilityService.isConnected()){pendingAccessibilityStart=false;startScan();}}
     @Override protected void onDestroy(){if(updateManager!=null)updateManager.destroy();super.onDestroy();}
 
-    void updateDashboard(){ if(scoreValue==null)return; TrainingStore.MonthlyStats m=new TrainingStore(this).currentMonthStats();
-        scoreValue.setText(m.total()==0?"—":m.score()+"%");
-        lossScoreValue.setText(m.total()==0?"—":(100-m.score())+"%");
-        if(userTradeCountValue!=null)userTradeCountValue.setText(String.valueOf(m.total())); }
+    void updateDashboard(){
+        if(licenceExpiryText!=null){
+            long expires=LicenseManager.expiresAt(this);
+            if(expires<=0) licenceExpiryText.setText("NOT AVAILABLE");
+            else {
+                String when=new SimpleDateFormat("dd MMM yyyy  •  HH:mm",Locale.getDefault()).format(new Date(expires));
+                long remaining=expires-System.currentTimeMillis();
+                if(remaining<=0) licenceExpiryText.setText("EXPIRED\n"+when);
+                else {
+                    long days=remaining/86_400_000L, hours=(remaining%86_400_000L)/3_600_000L;
+                    licenceExpiryText.setText(when+"\n"+days+" days "+hours+" hours remaining");
+                }
+            }
+        }
+        updateOverviewToggle();
+    }
 
     String currentDetectedAsset(){String a=prefs==null?"":prefs.getString("detected_asset","");return a==null||a.trim().isEmpty()?"AUTO_CHART":a.trim();}
     void updateAutoSymbol(){if(autoSymbolText==null)return;String a=currentDetectedAsset();String mode=prefs.getString("timeframe_mode","AUTO");String tf;
@@ -228,8 +233,12 @@ public class MainActivity extends Activity {
 
     void startScan(){if(Build.VERSION.SDK_INT<30){status.setText("Android 11 or newer is required.");return;}
         if(!AutoSymbolAccessibilityService.isConnected()){pendingAccessibilityStart=true;status.setText("Enable BUY SELL Signal Notifier in Accessibility.");startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));return;}
-        AutoSymbolAccessibilityService.setScannerEnabled(this,true);status.setText("SCANNER ACTIVE • Open the broker chart");}
-    void stopScan(){AutoSymbolAccessibilityService.setScannerEnabled(this,false);status.setText("SCANNER STOPPED");}
+        AutoSymbolAccessibilityService.setScannerEnabled(this,true);status.setText("SCANNER ACTIVE • Open the broker chart");updateOverviewToggle();}
+    void stopScan(){AutoSymbolAccessibilityService.setScannerEnabled(this,false);status.setText("SCANNER STOPPED");updateOverviewToggle();}
+    boolean scannerActive(){return prefs.getBoolean("scanner_enabled",false);}
+    void updateOverviewToggle(){if(overviewToggle==null)return;boolean active=scannerActive();
+        overviewToggle.setText(active?"SHUTDOWN SCANNER":"START SCANNER");
+        overviewToggle.setBackground(cardBg(active?Color.rgb(248,113,113):CYAN));}
 
     void addCheck(LinearLayout r,String label,String key,boolean def,int color){CheckBox c=new CheckBox(this);c.setText(label);c.setTextColor(color);c.setChecked(prefs.getBoolean(key,def));c.setOnCheckedChangeListener((b,v)->prefs.edit().putBoolean(key,v).apply());r.addView(c);}
     void addSeek(LinearLayout r,String label,String key,int min,int max,int def,String suffix){TextView value=tx(label+": "+prefs.getInt(key,def)+suffix,14,Color.WHITE);r.addView(value);SeekBar b=new SeekBar(this);b.setMax(max-min);b.setProgress(prefs.getInt(key,def)-min);b.setOnSeekBarChangeListener(new SimpleSeek(){public void onProgressChanged(SeekBar s,int p,boolean u){int v=min+p;value.setText(label+": "+v+suffix);if(u)prefs.edit().putInt(key,v).apply();}});r.addView(b);}
@@ -240,7 +249,22 @@ public class MainActivity extends Activity {
     LinearLayout column(){LinearLayout r=new LinearLayout(this);r.setOrientation(LinearLayout.VERTICAL);r.setPadding(dp(6),dp(4),dp(6),dp(24));return r;}
     void section(LinearLayout r,String label){TextView t=tx(label,17,CYAN);t.setTypeface(null,Typeface.BOLD);t.setPadding(0,dp(14),0,dp(8));r.addView(t);}
     void note(LinearLayout r,String text){TextView t=tx(text,12,Color.rgb(148,163,184));t.setPadding(dp(10),dp(9),dp(10),dp(9));t.setBackground(cardBg(BLUE));r.addView(t,space(-1,-2,8));}
-    Spinner spinner(String[] items){Spinner s=new Spinner(this);s.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,items));return s;}
+    Spinner spinner(String[] items){
+        Spinner s=new Spinner(this);
+        ArrayAdapter<String> adapter=new ArrayAdapter<String>(this,android.R.layout.simple_spinner_item,items){
+            @Override public View getView(int position,View convertView,android.view.ViewGroup parent){
+                TextView v=(TextView)super.getView(position,convertView,parent);return styleSpinnerText(v,false);
+            }
+            @Override public View getDropDownView(int position,View convertView,android.view.ViewGroup parent){
+                TextView v=(TextView)super.getDropDownView(position,convertView,parent);return styleSpinnerText(v,true);
+            }
+        };
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        s.setAdapter(adapter);s.setPopupBackgroundDrawable(new ColorDrawable(CARD));return s;
+    }
+    TextView styleSpinnerText(TextView v,boolean dropdown){v.setTextColor(Color.WHITE);v.setTextSize(16);v.setGravity(Gravity.CENTER_VERTICAL);
+        v.setPadding(dp(14),dp(dropdown?16:10),dp(14),dp(dropdown?16:10));
+        v.setBackgroundColor(dropdown?CARD:Color.TRANSPARENT);return v;}
     Button cyberButton(String text,int color){Button b=new Button(this);b.setText(text);b.setAllCaps(false);b.setTextColor(Color.WHITE);b.setTypeface(null,Typeface.BOLD);b.setBackground(cardBg(color));b.setLayoutParams(space(-1,dp(54),9));return b;}
     LinearLayout.LayoutParams space(int w,int h,int bottom){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(w,h);p.setMargins(0,0,0,dp(bottom));return p;}
     TextView tx(String s,int sp,int c){TextView t=new TextView(this);t.setText(s);t.setTextSize(sp);t.setTextColor(c);return t;}
