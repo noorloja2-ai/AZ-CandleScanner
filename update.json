@@ -1,7 +1,7 @@
 {
-  "version": "16.4.1",
+  "version": "16.4.2",
   "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.4/CandleScanner_v16.4.apk",
   "apkName": "CandleScanner_v16.4.apk",
-  "notes": "V16.4 refreshed: top option menu replaces swipe navigation. Added secure licence activation and request buttons. Scanning, automatic learning, Cloudflare sync, notifications and all controls remain active.",
-  "build": 70
+  "notes": "V16.4 automatic chart calibration: AZ now detects and saves the best usable chart area during scanning. Manual crop sliders were removed and a Recalibrate on Next Scan button was added. Scanner, learning, Cloudflare sync, notifications, licence screen and all other controls remain active.",
+  "build": 71
 }
