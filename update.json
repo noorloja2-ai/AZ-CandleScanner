@@ -1,11 +1,4 @@
 {
-  "version": "16.5",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.5/CandleScanner_v16.5.apk",
-  "apkName": "CandleScanner_v16.5.apk",
-  "notes": "V16.5 cyber interface refresh: dark menus with white options, licence expiry Overview, one Start/Shutdown control, white Scanner and Controls selections, and developer support details. Scanner, training, licence, and learning functions remain active.",
-  "build": 73
-}
-{
   "version": "16.6",
   "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.6/CandleScanner_v16.6.apk",
   "apkName": "CandleScanner_v16.6.apk",
