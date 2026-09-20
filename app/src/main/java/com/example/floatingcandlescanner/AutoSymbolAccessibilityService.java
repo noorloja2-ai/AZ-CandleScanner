@@ -642,6 +642,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 if(quick!=null && quick.highChance && verified.highVerified()){
                     boolean qb="BUY".equals(quick.label);
                     showQuickSignalCard(quick,horizon);
+                    maybeNotifyQuick(quick,horizon,verified);
                     String verifiedLabel=confidenceTitle(quick.score);
                     lastLiveStatus=verifiedLabel+" "+quick.label+" "+quick.score+"% • "+quick.reason;
                     liveText.setText(verifiedLabel+" "+quick.label+" "+quick.score+"% • "+tradeDuration(horizon)+
@@ -1166,7 +1167,95 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                         ? (Notification.DEFAULT_SOUND|Notification.DEFAULT_VIBRATE) : 0)
                 .addAction(new Notification.Action.Builder(0,"OPEN",open).build())
                 .addAction(new Notification.Action.Builder(0,"CLOSE",close).build());
-        getSystemService(NotificationManager.class).notify(SIGNAL_ID,n.build());
+        postNotification(n.build());
+    }
+
+    /** Live verified signals used to show only an overlay. Notify Android too. */
+    private void maybeNotifyQuick(QuickDecisionEngine.Result quick,int horizon,
+                                  OnlineLearner.Verification verified){
+        if(quick==null || !quick.highChance ||
+                !("BUY".equals(quick.label)||"SELL".equals(quick.label)))return;
+        int pct=quick.score;
+        int alertThreshold=Math.max(75,Math.min(90,
+                prefs==null?85:prefs.getInt("sound_alert_threshold",85)));
+        boolean soundEnabled=prefs==null || prefs.getBoolean("sound_alerts",true);
+        boolean playSound=soundEnabled && pct>=alertThreshold;
+        long now=System.currentTimeMillis();
+        long slot=now/(Math.max(1,horizon)*60_000L);
+        String key=currentAsset()+"|LIVE|"+quick.label+"|M"+horizon+"|"+slot;
+        if(key.equals(lastAlertKey))return;
+        lastAlertKey=key; lastAlertAt=now;
+
+        Intent openIntent=new Intent(this,MainActivity.class);
+        openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent open=PendingIntent.getActivity(this,31,openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+        Intent closeIntent=new Intent(this,SignalDismissReceiver.class);
+        closeIntent.setAction("scanner.DISMISS_SIGNAL");
+        PendingIntent close=PendingIntent.getBroadcast(this,32,closeIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+        int icon="BUY".equals(quick.label)?android.R.drawable.arrow_up_float:android.R.drawable.arrow_down_float;
+        Notification.Builder n=Build.VERSION.SDK_INT>=26
+                ?new Notification.Builder(this,playSound?SIGNAL_CH:SIGNAL_POPUP_CH)
+                :new Notification.Builder(this);
+        String details=currentAsset()+" • M"+horizon+" • TRADE "+tradeDuration(horizon)+"\n"+
+                quick.reason+"\n"+verified.summary()+"\nLive signal; confirm at candle close.";
+        n.setSmallIcon(icon)
+                .setContentTitle(confidenceTitle(pct)+" • "+quick.label+" "+pct+"%")
+                .setContentText(currentAsset()+" • M"+horizon+" • LIVE VERIFIED")
+                .setStyle(new Notification.BigTextStyle().bigText(details))
+                .setAutoCancel(false).setOngoing(true).setContentIntent(open)
+                .setPriority(Notification.PRIORITY_HIGH)
+                .setCategory(Notification.CATEGORY_RECOMMENDATION)
+                .setOnlyAlertOnce(true)
+                .setDefaults(Build.VERSION.SDK_INT<26 && playSound
+                        ?(Notification.DEFAULT_SOUND|Notification.DEFAULT_VIBRATE):0)
+                .addAction(new Notification.Action.Builder(0,"OPEN",open).build())
+                .addAction(new Notification.Action.Builder(0,"CLOSE",close).build());
+        postNotification(n.build());
+    }
+
+    private void postNotification(Notification notification){
+        if(Build.VERSION.SDK_INT>=33 &&
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                        !=android.content.pm.PackageManager.PERMISSION_GRANTED){
+            if(prefs!=null)prefs.edit().putString("notification_status","Permission required").apply();
+            return;
+        }
+        NotificationManager nm=getSystemService(NotificationManager.class);
+        if(nm==null || !nm.areNotificationsEnabled()){
+            if(prefs!=null)prefs.edit().putString("notification_status","Blocked in Android settings").apply();
+            return;
+        }
+        try{
+            nm.notify(SIGNAL_ID,notification);
+            if(prefs!=null)prefs.edit().putString("notification_status","Working").apply();
+        }catch(Exception e){
+            if(prefs!=null)prefs.edit().putString("notification_status","Error: "+e.getClass().getSimpleName()).apply();
+        }
+    }
+
+    public static boolean sendTestNotification(){
+        AutoSymbolAccessibilityService s=instance;
+        if(s==null)return false;
+        s.main.post(()->{
+            s.createNotificationChannel();
+            Intent openIntent=new Intent(s,MainActivity.class);
+            openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            PendingIntent open=PendingIntent.getActivity(s,41,openIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+            Notification.Builder b=Build.VERSION.SDK_INT>=26
+                    ?new Notification.Builder(s,SIGNAL_CH):new Notification.Builder(s);
+            b.setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("AZ signal notifications are working")
+                    .setContentText("You will be notified when a verified BUY or SELL signal is ready.")
+                    .setStyle(new Notification.BigTextStyle().bigText(
+                            "Test successful. Keep Android notifications enabled and do not restrict CandleScanner battery use."))
+                    .setContentIntent(open).setAutoCancel(true)
+                    .setPriority(Notification.PRIORITY_HIGH);
+            s.postNotification(b.build());
+        });
+        return true;
     }
 
     private String tradeDuration(int horizon){
