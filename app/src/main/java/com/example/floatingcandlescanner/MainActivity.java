@@ -80,7 +80,7 @@ public class MainActivity extends Activity {
         h.addView(logo,new LinearLayout.LayoutParams(dp(66),dp(66)));
         LinearLayout words=new LinearLayout(this); words.setOrientation(LinearLayout.VERTICAL);
         TextView brand=tx("AZ  NEURAL SCANNER",19,Color.WHITE); brand.setTypeface(null,Typeface.BOLD);
-        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.6",11,CYAN);
+        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.7",11,CYAN);
         words.addView(brand); words.addView(sub); h.addView(words,new LinearLayout.LayoutParams(0,-2,1));
         return h;
     }
@@ -152,6 +152,26 @@ public class MainActivity extends Activity {
         addCheck(r,"Elite Precision Mode", "elite_mode",true,Color.rgb(167,243,208));
         addCheck(r,"Sound + vibration alerts", "sound_alerts",true,Color.rgb(253,230,138));
         addSeek(r,"Sound alert threshold","sound_alert_threshold",75,90,85,"%");
+        section(r,"NOTIFICATIONS");
+        TextView notificationState=tx(notificationStatus(),13,Color.WHITE);
+        notificationState.setPadding(dp(10),dp(10),dp(10),dp(10));
+        notificationState.setBackground(cardBg(CYAN)); r.addView(notificationState,space(-1,-2,9));
+        Button testNotification=cyberButton("TEST SIGNAL NOTIFICATION",CYAN);
+        testNotification.setOnClickListener(v->{
+            if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    !=PackageManager.PERMISSION_GRANTED){
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},2001);
+                notificationState.setText("Allow notifications, then tap Test again.");
+            }else if(!AutoSymbolAccessibilityService.sendTestNotification()){
+                notificationState.setText("Start the scanner service first, then test again.");
+            }else notificationState.setText("Test sent. Check the notification shade.");
+        }); r.addView(testNotification);
+        Button notificationSettings=cyberButton("OPEN ANDROID NOTIFICATION SETTINGS",BLUE);
+        notificationSettings.setOnClickListener(v->{
+            Intent i=new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName());
+            startActivity(i);
+        }); r.addView(notificationSettings);
         section(r,"SESSION SAFETY");
         String[] sessions={"ALL","LONDON","NEW_YORK","OVERLAP","ASIA"};
         String[] names={"All sessions","London","New York","London + New York overlap","Asia"};
@@ -197,7 +217,7 @@ public class MainActivity extends Activity {
 
     LinearLayout buildUpdate(){
         LinearLayout r=column(); section(r,"AZ APP UPDATE");
-        TextView current=tx("CURRENT VERSION  16.6",18,CYAN); current.setTypeface(null,Typeface.BOLD);
+        TextView current=tx("CURRENT VERSION  16.7",18,CYAN); current.setTypeface(null,Typeface.BOLD);
         current.setGravity(Gravity.CENTER); current.setPadding(0,dp(25),0,dp(20)); r.addView(current);
         updateManager=new AppUpdateManager(this,status);
         Button update=cyberButton("CHECK / UPDATE APP",CYAN); update.setOnClickListener(v->updateManager.checkForUpdate(true)); r.addView(update);
@@ -268,6 +288,13 @@ public class MainActivity extends Activity {
         AutoSymbolAccessibilityService.setScannerEnabled(this,true);status.setText("SCANNER ACTIVE • Open the broker chart");updateOverviewToggle();}
     void stopScan(){AutoSymbolAccessibilityService.setScannerEnabled(this,false);status.setText("SCANNER STOPPED");updateOverviewToggle();}
     boolean scannerActive(){return prefs.getBoolean("scanner_enabled",false);}
+    String notificationStatus(){
+        NotificationManager nm=getSystemService(NotificationManager.class);
+        if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                !=PackageManager.PERMISSION_GRANTED)return "Status: permission required";
+        if(nm!=null&&!nm.areNotificationsEnabled())return "Status: blocked in Android settings";
+        return "Status: "+prefs.getString("notification_status","ready to test");
+    }
     void updateOverviewToggle(){if(overviewToggle==null)return;boolean active=scannerActive();
         overviewToggle.setText(active?"SHUTDOWN SCANNER":"START SCANNER");
         overviewToggle.setBackground(cardBg(active?Color.rgb(248,113,113):CYAN));}
