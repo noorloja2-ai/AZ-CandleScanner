@@ -1,0 +1,7 @@
+CandleScanner AZ v16.7
+
+- Sends Android notifications for verified live high-confidence BUY/SELL signals.
+- Adds explicit Android 13+ notification permission handling and status reporting.
+- Adds Test Signal Notification and Android notification settings controls.
+- Keeps completed-candle notification deduplication and user-selected sound threshold.
+- Adds Dependabot configuration and a private vulnerability reporting policy.
