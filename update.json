@@ -1,7 +1,7 @@
 {
-  "version": "16.6",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.6/CandleScanner_v16.6.apk",
-  "apkName": "CandleScanner_v16.6.apk",
-  "notes": "V16.6 adds monthly and yearly Profit/Win Score, Loss Score, and resolved result totals to Overview while preserving licence expiry, scanner controls, training, and learning.",
-  "build": 74
+  "version": "16.7",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.7/CandleScanner_v16.7.apk",
+  "apkName": "CandleScanner_v16.7.apk",
+  "notes": "V16.7 fixes verified live signal notifications, adds a notification test and Android settings shortcut, and adds repository security automation.",
+  "build": 75
 }
