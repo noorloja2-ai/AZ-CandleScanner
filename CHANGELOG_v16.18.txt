@@ -1,0 +1,9 @@
+AZ CandleScanner v16.18
+
+- Adds an Automatic Pattern BUY / SELL switch in Controls.
+- The switch is OFF by default, preserving the safer v16.16 confirmation logic.
+- Safe Mode keeps its existing local and shared learner; experimental pattern-mode outcomes are stored separately and cannot change Safe Mode calibration.
+- A confirmed bullish pattern automatically creates BUY.
+- A confirmed bearish pattern automatically creates SELL.
+- Neutral, unconfirmed and indecision patterns remain NO TRADE.
+- POOR/GOOD/BEST market condition remains visible as a warning and no longer blocks a directional pattern signal.

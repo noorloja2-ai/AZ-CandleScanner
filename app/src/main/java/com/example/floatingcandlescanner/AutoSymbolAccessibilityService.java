@@ -66,6 +66,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private boolean infoCardPinned=false;
     private OnlineLearner learner;
     private TrainingStore training;
+    private PatternModeLearningStore patternLearning;
     private BrokerBoardLearner boardLearner;
     private SelfDecisionEngine selfDecision;
     private QuickDecisionEngine quickDecision;
@@ -120,6 +121,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
         learner=new OnlineLearner(this);
         training=new TrainingStore(this);
+        patternLearning=new PatternModeLearningStore(this);
         boardLearner=new BrokerBoardLearner(this);
         selfDecision=new SelfDecisionEngine();
         quickDecision=new QuickDecisionEngine();
@@ -575,6 +577,16 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 boardLearner.addPrediction(targetBoundary,asset,selectedH,selectedH+1,a.latestY,a.boardState);
         }
 
+        // Keep the optional aggressive pattern mode completely outside the safe
+        // learner. Its outcomes go to a separate local store and never update
+        // OnlineLearner or the validated community-learning queue.
+        boolean automaticPatterns=prefs.getBoolean("auto_pattern_signals",false);
+        if(automaticPatterns)decision=applyAutomaticPatternSignal(decision);
+        if(automatic && targetBoundary>0L && patternLearning!=null){
+            patternLearning.resolveAndRecord(targetBoundary,asset,selectedH,selectedH+1,
+                    a.latestY,automaticPatterns?decision:null);
+        }
+
         if(liveRefresh){
             QuickDecisionEngine.Result quick=null;
             if(prefs.getBoolean("quick_decision",true) && quickDecision!=null && a.boardState!=null){
@@ -755,16 +767,17 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(!bannerMonitorEnabled() || r==null)return;
         if(topInfoText==null)createTopInfoBar();
         if(topInfoText==null)return;
-        boolean buy=r.buyProbability>=r.sellProbability;
         String market=marketCondition(r);
-        String direction="WAIT".equals(r.label)?"NO TRADE":(buy?"BUY":"SELL");
+        String direction="WAIT".equals(r.label)?"NO TRADE":r.label;
         int pct=Math.max(r.buyProbability,r.sellProbability);
         if(quick!=null && quick.highChance){
             direction=quick.label;
             pct=quick.score;
         }
-        int minimum=prefs.getInt("quick_decision_threshold",82);
-        if("POOR".equals(market) || pct<minimum || "WAIT".equals(r.label))direction="NO TRADE";
+        if(!prefs.getBoolean("auto_pattern_signals",false)){
+            int minimum=prefs.getInt("quick_decision_threshold",82);
+            if("POOR".equals(market) || pct<minimum || "WAIT".equals(r.label))direction="NO TRADE";
+        }
         String pattern=validatedBannerPattern(r);
         if(pattern.isEmpty() || "MULTI-FACTOR CONFLUENCE".equals(pattern))pattern="NOT DETECTED";
         long entryAt=predictionTargetStartMs>System.currentTimeMillis()
@@ -779,6 +792,41 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         topInfoText.setTextColor("NO TRADE".equals(direction)
                 ?Color.rgb(250,204,21):("BUY".equals(direction)
                 ?Color.rgb(134,239,172):Color.rgb(252,165,165)));
+    }
+
+    private SignalResult applyAutomaticPatternSignal(SignalResult r){
+        if(r==null || !"WAIT".equals(r.label))return r;
+        String pattern=validatedBannerPattern(r);
+        String direction=directionFromPattern(pattern);
+        if(direction.isEmpty())return r;
+
+        int bp=r.buyProbability;
+        int sp=r.sellProbability;
+        int strength=Math.max(r.strength,Math.max(bp,sp));
+        String explanation="Automatic "+direction+" from confirmed pattern: "+pattern+
+                ". Market condition remains a warning and does not block the signal. "+r.explanation;
+        return new SignalResult(direction,strength,r.score,bp,sp,r.confidence,
+                r.regime,r.rawBuyProbability,r.setupQuality,r.structure,explanation);
+    }
+
+    private String directionFromPattern(String pattern){
+        if(pattern==null)return "";
+        String p=pattern.toUpperCase(Locale.US);
+        if(p.isEmpty() || p.contains("NOT DETECTED") || p.contains("NOT CONFIRMED")
+                || p.contains("AWAITING CONFIRMATION") || p.contains("DOJI")
+                || p.contains("SPINNING TOP") || p.contains("INDECISION"))return "";
+        boolean bullish=p.contains("BULL") || p.contains("MORNING")
+                || p.contains("HAMMER") || p.contains("PIERCING")
+                || p.contains("WHITE SOLDIER") || p.contains("THREE INSIDE UP")
+                || p.contains("THREE OUTSIDE UP") || p.contains("RISING THREE")
+                || p.contains("LOWER-WICK BUYER") || p.contains("BUY PRESSURE");
+        boolean bearish=p.contains("BEAR") || p.contains("EVENING")
+                || p.contains("SHOOTING STAR") || p.contains("HANGING MAN")
+                || p.contains("DARK CLOUD") || p.contains("BLACK CROW")
+                || p.contains("THREE INSIDE DOWN") || p.contains("THREE OUTSIDE DOWN")
+                || p.contains("FALLING THREE") || p.contains("UPPER-WICK SELLER")
+                || p.contains("SELL PRESSURE");
+        return bullish==bearish?"":(bullish?"BUY":"SELL");
     }
 
     private String marketCondition(SignalResult r){

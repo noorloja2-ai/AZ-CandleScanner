@@ -80,7 +80,7 @@ public class MainActivity extends Activity {
         h.addView(logo,new LinearLayout.LayoutParams(dp(66),dp(66)));
         LinearLayout words=new LinearLayout(this); words.setOrientation(LinearLayout.VERTICAL);
         TextView brand=tx("AZ  NEURAL SCANNER",19,Color.WHITE); brand.setTypeface(null,Typeface.BOLD);
-        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.16",11,CYAN);
+        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.18",11,CYAN);
         words.addView(brand); words.addView(sub); h.addView(words,new LinearLayout.LayoutParams(0,-2,1));
         return h;
     }
@@ -161,6 +161,8 @@ public class MainActivity extends Activity {
         addCheck(r,"Broker Board Learning", "broker_board_learning",true,CYAN);
         addCheck(r,"Quick High-Confidence Decision", "quick_decision",true,Color.rgb(167,243,208));
         addSeek(r,"Quick signal threshold","quick_decision_threshold",78,90,82,"%");
+        addCheck(r,"Automatic Pattern BUY / SELL", "auto_pattern_signals",false,Color.rgb(250,204,21));
+        note(r,"OFF (recommended): patterns require trend, structure and market-quality confirmation. ON: each confirmed directional pattern creates BUY or SELL; market quality is shown only as a warning.");
         addCheck(r,"High Accuracy Mode", "high_accuracy",true,Color.WHITE);
         addCheck(r,"Elite Precision Mode", "elite_mode",true,Color.rgb(167,243,208));
         addCheck(r,"Sound + vibration alerts", "sound_alerts",true,Color.rgb(253,230,138));
@@ -230,7 +232,7 @@ public class MainActivity extends Activity {
 
     LinearLayout buildUpdate(){
         LinearLayout r=column(); section(r,"AZ APP UPDATE");
-        TextView current=tx("CURRENT VERSION  16.16",18,CYAN); current.setTypeface(null,Typeface.BOLD);
+        TextView current=tx("CURRENT VERSION  16.18",18,CYAN); current.setTypeface(null,Typeface.BOLD);
         current.setGravity(Gravity.CENTER); current.setPadding(0,dp(25),0,dp(20)); r.addView(current);
         updateManager=new AppUpdateManager(this,status);
         Button update=cyberButton("CHECK / UPDATE APP",CYAN); update.setOnClickListener(v->updateManager.checkForUpdate(true)); r.addView(update);
