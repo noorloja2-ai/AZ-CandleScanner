@@ -507,6 +507,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     }
 
     private boolean analyzeBitmap(Bitmap b,boolean liveRefresh,boolean automatic,long targetBoundary){
+        refreshDetectedContext();
         String asset=currentAsset();
         learner.setAsset(asset);
         CandleVision.Analysis a=analyzeWithAutoCalibration(b);
@@ -770,8 +771,10 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 ?predictionTargetStartMs:nextBoundary(System.currentTimeMillis(),Math.max(1,horizon));
         String entry=new SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(new Date(entryAt));
         String score="NO TRADE".equals(direction)?"":" • "+pct+"%";
+        String trend=marketTrend(lastAnalysis==null?null:lastAnalysis.boardState);
         topInfoText.setText("NEXT CANDLE: "+direction+score+"\n"+
-                "PATTERN: "+pattern+" • MARKET: "+market+"\n"+
+                "PATTERN: "+pattern+"\n"+
+                "TREND: "+trend+" • MARKET: "+market+"\n"+
                 currentAsset()+" • M"+Math.max(1,horizon)+" • ENTRY "+entry);
         topInfoText.setTextColor("NO TRADE".equals(direction)
                 ?Color.rgb(250,204,21):("BUY".equals(direction)
@@ -787,6 +790,14 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(pct>=90 && r.setupQuality>=70)return "BEST";
         if(pct>=70 && r.setupQuality>=45)return "GOOD";
         return "POOR";
+    }
+
+    private String marketTrend(CandleVision.BoardState s){
+        if(s==null)return "UNKNOWN";
+        double directional=.36*s.trend+.30*s.sequenceBias+.22*s.momentum+.12*s.recentTwoDirection;
+        if(directional>=.16)return s.pricePosition>=.82?"BULLISH / EXTENDED":"BULLISH";
+        if(directional<=-.16)return s.pricePosition<=.18?"BEARISH / EXTENDED":"BEARISH";
+        return "RANGE / MIXED";
     }
 
     private void createTopInfoBar(){
@@ -807,7 +818,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         topInfoText.setTypeface(null,Typeface.BOLD);
         topInfoText.setGravity(Gravity.CENTER);
         topInfoText.setTextColor(Color.rgb(125,211,252));
-        topInfoBar.addView(topInfoText,new LinearLayout.LayoutParams(0,dp(66),1));
+        topInfoBar.addView(topInfoText,new LinearLayout.LayoutParams(0,dp(82),1));
 
         TextView hide=new TextView(this);
         hide.setText("×");
@@ -831,7 +842,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         int defaultX=Math.max(0,(screenW-dp(330))/2);
         if(prefs==null)prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
         topInfoLp.x=Math.max(0,Math.min(prefs.getInt("banner_x",defaultX),Math.max(0,screenW-dp(330))));
-        topInfoLp.y=Math.max(0,Math.min(prefs.getInt("banner_y",dp(66)),Math.max(0,screenH-dp(70))));
+        topInfoLp.y=Math.max(0,Math.min(prefs.getInt("banner_y",dp(66)),Math.max(0,screenH-dp(88))));
 
         // Press and drag anywhere on the banner text to move it. The close
         // button remains separately clickable. Save the position for next use.
@@ -847,7 +858,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                         return true;
                     case MotionEvent.ACTION_MOVE:
                         int maxX=Math.max(0,getResources().getDisplayMetrics().widthPixels-dp(330));
-                        int maxY=Math.max(0,getResources().getDisplayMetrics().heightPixels-dp(70));
+                        int maxY=Math.max(0,getResources().getDisplayMetrics().heightPixels-dp(88));
                         topInfoLp.x=Math.max(0,Math.min(maxX,startX+Math.round(e.getRawX()-downX)));
                         topInfoLp.y=Math.max(0,Math.min(maxY,startY+Math.round(e.getRawY()-downY)));
                         try{wm.updateViewLayout(topInfoBar,topInfoLp);}catch(Exception ignored){}
@@ -1204,6 +1215,11 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         String pattern=shortSetup(r);
         if(pattern==null || pattern.trim().isEmpty())return "NOT DETECTED";
         String p=pattern.toUpperCase(Locale.US);
+        // Some expert summaries append a regime after the actual candle name.
+        // The banner now displays trend separately, so never present that suffix
+        // as if it were part of the detected pattern.
+        p=p.replaceFirst("^(?:MASTER GUIDE|REFERENCE|PATTERN)\\s*:\\s*","");
+        p=p.replaceAll("\\s*[•|]\\s*(?:RANGE\\s*/\\s*MIXED|BULLISH(?:\\s*/\\s*EXTENDED)?|BEARISH(?:\\s*/\\s*EXTENDED)?)\\s*$","").trim();
         CandleVision.BoardState state=lastAnalysis==null?null:lastAnalysis.boardState;
         if(state==null)return p;
 
@@ -1232,7 +1248,50 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(multi && (Math.abs(state.sequenceBias)<.24
                 || (bullish && state.recentTwoDirection<=.08)
                 || (bearish && state.recentTwoDirection>=-.08)))return "NOT CONFIRMED";
+
+        // Reversal shapes need follow-through from more than one newest region.
+        // A lone opposite candle is labelled as awaiting confirmation instead of
+        // being advertised as a completed reversal setup.
+        boolean reversal=p.contains("HAMMER") || p.contains("SHOOTING STAR")
+                || p.contains("HANGING MAN") || p.contains("ENGULFING")
+                || p.contains("MORNING STAR") || p.contains("EVENING STAR")
+                || p.contains("PIERCING") || p.contains("DARK CLOUD")
+                || p.contains("TWEEZER") || p.contains("THREE INSIDE")
+                || p.contains("THREE OUTSIDE");
+        if(reversal && ((bullish && state.recentTwoDirection<=.14)
+                || (bearish && state.recentTwoDirection>=-.14)))return "AWAITING CONFIRMATION";
         return p;
+    }
+
+    /** Refresh pair/timeframe on every scan; some canvas brokers do not emit a
+     * reliable accessibility event when their asset dropdown changes. */
+    private void refreshDetectedContext(){
+        AccessibilityNodeInfo root=null;
+        try{
+            root=getRootInActiveWindow();
+            if(root==null)return;
+            String visible=collectVisibleText(root);
+            String symbol=detectSymbol(visible),timeframe=detectTimeframe(visible);
+            long now=System.currentTimeMillis();
+            SharedPreferences.Editor edit=prefs.edit();
+            if(symbol!=null&&!symbol.isEmpty()){
+                String previous=prefs.getString("detected_asset","");
+                if(!symbol.equals(previous)){
+                    if(training!=null)training.clearPending();
+                    if(boardLearner!=null)boardLearner.clearPending();
+                    if(learner!=null)learner.setAsset(symbol);
+                    if(selfDecision!=null)selfDecision.reset();
+                    if(quickDecision!=null)quickDecision.reset();
+                    lastAlertKey="";
+                }
+                edit.putString("detected_asset",symbol).putLong("detected_asset_time",now);
+            }
+            if(timeframe!=null&&!timeframe.isEmpty())edit.putString("detected_timeframe",timeframe)
+                    .putString("last_valid_timeframe",timeframe).putLong("detected_timeframe_time",now);
+            edit.apply();
+        }catch(Exception ignored){}finally{
+            if(root!=null)try{root.recycle();}catch(Exception ignored){}
+        }
     }
 
     private void showSignalCard(SignalResult r,int horizon,int c){
@@ -1640,13 +1699,18 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         String u=text.toUpperCase(Locale.US).replace('\u00A0',' ')
                 .replace("／","/").replace("–","-").replace("—","-");
         Matcher m=PAIR.matcher(u);
-        if(!m.find())return null;
-        String a=m.group(1).toUpperCase(Locale.US),b=m.group(2).toUpperCase(Locale.US);
-        if(a.equals(b))return null;
-        String symbol=a+"/"+b;
-        int s=Math.max(0,m.start()-50),e=Math.min(u.length(),m.end()+50);
-        if(u.substring(s,e).contains("OTC"))symbol+=" OTC";
-        return symbol;
+        String best=null; int bestScore=Integer.MIN_VALUE;
+        while(m.find()){
+            String a=m.group(1).toUpperCase(Locale.US),b=m.group(2).toUpperCase(Locale.US);
+            if(a.equals(b))continue;
+            int s=Math.max(0,m.start()-24),e=Math.min(u.length(),m.end()+24);
+            boolean otc=u.substring(s,e).contains("OTC");
+            // Prefer an OTC-labelled selector and, for equal candidates, the
+            // latest visible occurrence instead of retaining an older overlay.
+            int score=(otc?100000:0)+m.start();
+            if(score>=bestScore){bestScore=score;best=a+"/"+b+(otc?" OTC":"");}
+        }
+        return best;
     }
 
     static String detectTimeframe(String text){

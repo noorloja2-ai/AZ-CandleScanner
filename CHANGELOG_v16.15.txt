@@ -1,0 +1,8 @@
+AZ CandleScanner v16.15
+
+- Refreshes the selected broker pair and timeframe before every scan, fixing stale banner symbols after a chart change.
+- Prefers the current OTC selector when multiple currency-pair texts are visible.
+- Merges visually connected pieces of one wide candle before pattern analysis, reducing false three-candle patterns.
+- Separates TREND (bullish, bearish, range/mixed, extended) from MARKET quality (poor, good, best).
+- Requires newest-candle follow-through before displaying reversal pattern confirmation.
+- Keeps NO TRADE when the setup quality is poor, even when a valid candle shape is detected.

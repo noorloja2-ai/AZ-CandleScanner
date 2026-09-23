@@ -1,8 +1,8 @@
 {
-  "version": "16.14",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.14/CandleScanner_v16.14.apk",
-  "apkName": "CandleScanner_v16.14.apk",
-  "notes": "V16.14 gives the newest two candle regions priority and immediately rejects stale bullish or bearish pattern labels after an opposing move.",
-  "build": 82,
-  "publishedAt": "2026-09-23T21:30:00Z"
+  "version": "16.15",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.15/CandleScanner_v16.15.apk",
+  "apkName": "CandleScanner_v16.15.apk",
+  "notes": "V16.15 fixes stale broker pairs, merges split wide-candle regions, separates trend from market quality, and requires reversal confirmation.",
+  "build": 83,
+  "publishedAt": "2026-09-23T22:00:00Z"
 }

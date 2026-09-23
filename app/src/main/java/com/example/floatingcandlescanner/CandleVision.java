@@ -86,6 +86,8 @@ public class CandleVision {
         List<Double> bodyRatios = new ArrayList<>();
         List<Double> upperWicks = new ArrayList<>();
         List<Double> lowerWicks = new ArrayList<>();
+        List<Boolean> touchesLeft = new ArrayList<>();
+        List<Boolean> touchesRight = new ArrayList<>();
 
         float[] hsv = new float[3];
 
@@ -95,6 +97,7 @@ public class CandleVision {
 
             long bull=0, bear=0, bullY=0, bearY=0;
             int minY=scanHeight, maxY=-1, colored=0, sampled=0;
+            int leftColored=0,leftSampled=0,rightColored=0,rightSampled=0;
 
             int sx = Math.max(1, (bx1-bx0)/12);
             int sy = Math.max(1, scanHeight/150);
@@ -118,8 +121,13 @@ public class CandleVision {
 
                     if (bullish || red) {
                         colored++;
+                        if(x < bx0+(bx1-bx0)/3){leftColored++;leftSampled++;}
+                        else if(x >= bx1-(bx1-bx0)/3){rightColored++;rightSampled++;}
                         if (y < minY) minY = y;
                         if (y > maxY) maxY = y;
+                    }else{
+                        if(x < bx0+(bx1-bx0)/3)leftSampled++;
+                        else if(x >= bx1-(bx1-bx0)/3)rightSampled++;
                     }
                     if (bullish) { bull++; bullY += y; bullRows[ri]++; }
                     if (red) { bear++; bearY += y; bearRows[ri]++; }
@@ -177,9 +185,19 @@ public class CandleVision {
             bodyRatios.add(bodyRatio);
             upperWicks.add(upperRatio);
             lowerWicks.add(lowerRatio);
+            touchesLeft.add(leftSampled>0 && (double)leftColored/leftSampled>.025);
+            touchesRight.add(rightSampled>0 && (double)rightColored/rightSampled>.025);
         }
         crop.recycle();
 
+        if (dirs.size() < 8) return empty();
+
+        // A fixed sampling cell can cut one wide broker candle into two pieces.
+        // Join only neighbours that physically continue across the shared edge,
+        // have the same colour and substantially overlap vertically. Real adjacent
+        // candles normally have a blank gap at that edge and remain separate.
+        mergeSplitCandleRegions(dirs,ys,ranges,densities,bodyRatios,upperWicks,lowerWicks,
+                touchesLeft,touchesRight);
         if (dirs.size() < 8) return empty();
 
         // AUTO captures just after a candle boundary. The newly-opened live candle
@@ -280,6 +298,33 @@ public class CandleVision {
         int i=n-1;
         dirs.remove(i);ys.remove(i);ranges.remove(i);densities.remove(i);
         body.remove(i);upper.remove(i);lower.remove(i);
+    }
+
+    private static void mergeSplitCandleRegions(
+            List<Double> dirs,List<Double> ys,List<Double> ranges,List<Double> densities,
+            List<Double> body,List<Double> upper,List<Double> lower,
+            List<Boolean> touchesLeft,List<Boolean> touchesRight){
+        for(int i=1;i<dirs.size();){
+            double d0=dirs.get(i-1),d1=dirs.get(i);
+            double avgRange=(ranges.get(i-1)+ranges.get(i))*.5;
+            boolean sameSide=d0*d1>.18 && Math.signum(d0)==Math.signum(d1);
+            boolean joins=touchesRight.get(i-1)&&touchesLeft.get(i);
+            boolean overlaps=Math.abs(ys.get(i-1)-ys.get(i))<=Math.max(.008,avgRange*.32);
+            if(!(sameSide&&joins&&overlaps)){i++;continue;}
+            double w0=Math.max(.001,densities.get(i-1)),w1=Math.max(.001,densities.get(i));
+            double w=w0+w1;
+            dirs.set(i-1,(d0*w0+d1*w1)/w);
+            ys.set(i-1,(ys.get(i-1)*w0+ys.get(i)*w1)/w);
+            ranges.set(i-1,Math.max(ranges.get(i-1),ranges.get(i)));
+            densities.set(i-1,Math.min(1.0,(w0+w1)*.5));
+            body.set(i-1,(body.get(i-1)*w0+body.get(i)*w1)/w);
+            upper.set(i-1,(upper.get(i-1)*w0+upper.get(i)*w1)/w);
+            lower.set(i-1,(lower.get(i-1)*w0+lower.get(i)*w1)/w);
+            touchesRight.set(i-1,touchesRight.get(i));
+            dirs.remove(i);ys.remove(i);ranges.remove(i);densities.remove(i);
+            body.remove(i);upper.remove(i);lower.remove(i);
+            touchesLeft.remove(i);touchesRight.remove(i);
+        }
     }
 
 
