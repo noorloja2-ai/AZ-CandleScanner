@@ -36,7 +36,7 @@ import java.util.regex.Pattern;
  * appear only for statistically verified setups. The service never stores screenshots or credentials.
  */
 public class AutoSymbolAccessibilityService extends AccessibilityService {
-    private static final String CCY = "EUR|GBP|USD|JPY|CHF|AUD|NZD|CAD|SGD|HKD|CNH|CNY|INR|BRL|MXN|ZAR|TRY|SEK|NOK|DKK|PLN|HUF|CZK|AED|SAR";
+    private static final String CCY = "EUR|GBP|USD|JPY|CHF|AUD|NZD|CAD|SGD|HKD|CNH|CNY|INR|BRL|MXN|ZAR|TRY|SEK|NOK|DKK|PLN|HUF|CZK|AED|SAR|JOD|BHD|KWD|QAR|OMR|ILS|THB|IDR|MYR|PHP|VND|KRW|PKR|BDT|EGP|MAD|RON|BGN|ISK";
     private static final String ASSET = CCY + "|XAU|XAG|BTC|ETH|SOL|BNB";
     private static final Pattern PAIR = Pattern.compile("(?i)(?<![A-Z0-9])(" + ASSET + ")\\s*[/\\-_:]?\\s*(" + ASSET + "|USDT)(?![A-Z0-9])");
     private static final Pattern TF_M = Pattern.compile("(?i)(?<![A-Z0-9])M\\s*([1-5])(?!\\d)");

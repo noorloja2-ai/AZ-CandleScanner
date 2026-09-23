@@ -1,0 +1,5 @@
+AZ CandleScanner v16.16
+
+- Adds JOD recognition, fixing the stale GBP/JPY banner shown while JOD/CNY OTC was selected.
+- Adds additional Middle Eastern, Asian and European currency codes used by OTC brokers.
+- Preserves the v16.15 candle-region, trend-quality and reversal-confirmation improvements.

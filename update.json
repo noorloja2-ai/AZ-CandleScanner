@@ -1,8 +1,8 @@
 {
-  "version": "16.15",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.15/CandleScanner_v16.15.apk",
-  "apkName": "CandleScanner_v16.15.apk",
-  "notes": "V16.15 fixes stale broker pairs, merges split wide-candle regions, separates trend from market quality, and requires reversal confirmation.",
-  "build": 83,
-  "publishedAt": "2026-09-23T22:00:00Z"
+  "version": "16.16",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.16/CandleScanner_v16.16.apk",
+  "apkName": "CandleScanner_v16.16.apk",
+  "notes": "V16.16 recognizes JOD/CNY and other additional broker currency codes, preventing the banner from retaining the previous pair.",
+  "build": 84,
+  "publishedAt": "2026-09-23T20:45:00Z"
 }
