@@ -1,0 +1,6 @@
+CandleScanner AZ v16.10
+
+- Press and drag the broker-screen information banner to move it.
+- Saves the banner position and restores it when the scanner starts.
+- Keeps the banner close button working.
+- Preserves licence, notifications, statistics, local learning and shared learning.

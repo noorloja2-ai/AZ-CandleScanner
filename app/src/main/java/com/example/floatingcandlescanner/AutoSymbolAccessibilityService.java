@@ -62,6 +62,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private LinearLayout signalCard;
     private LinearLayout topInfoBar;
     private TextView topInfoText;
+    private WindowManager.LayoutParams topInfoLp;
     private boolean infoCardPinned=false;
     private OnlineLearner learner;
     private TrainingStore training;
@@ -786,16 +787,52 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         topInfoBar.addView(hide,new LinearLayout.LayoutParams(dp(28),dp(40)));
         hide.setOnClickListener(v->topInfoBar.setVisibility(View.GONE));
 
-        WindowManager.LayoutParams infoLp=new WindowManager.LayoutParams(
+        topInfoLp=new WindowManager.LayoutParams(
                 dp(330),WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
-        infoLp.gravity=Gravity.TOP|Gravity.CENTER_HORIZONTAL;
-        infoLp.y=dp(66);
-        try{wm.addView(topInfoBar,infoLp);}catch(Exception e){
-            topInfoBar=null; topInfoText=null;
+        topInfoLp.gravity=Gravity.TOP|Gravity.START;
+        int screenW=getResources().getDisplayMetrics().widthPixels;
+        int screenH=getResources().getDisplayMetrics().heightPixels;
+        int defaultX=Math.max(0,(screenW-dp(330))/2);
+        if(prefs==null)prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
+        topInfoLp.x=Math.max(0,Math.min(prefs.getInt("banner_x",defaultX),Math.max(0,screenW-dp(330))));
+        topInfoLp.y=Math.max(0,Math.min(prefs.getInt("banner_y",dp(66)),Math.max(0,screenH-dp(70))));
+
+        // Press and drag anywhere on the banner text to move it. The close
+        // button remains separately clickable. Save the position for next use.
+        topInfoBar.setOnTouchListener(new View.OnTouchListener(){
+            int startX,startY;
+            float downX,downY;
+            @Override public boolean onTouch(View v,MotionEvent e){
+                switch(e.getActionMasked()){
+                    case MotionEvent.ACTION_DOWN:
+                        startX=topInfoLp.x; startY=topInfoLp.y;
+                        downX=e.getRawX(); downY=e.getRawY();
+                        v.setPressed(true);
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        int maxX=Math.max(0,getResources().getDisplayMetrics().widthPixels-dp(330));
+                        int maxY=Math.max(0,getResources().getDisplayMetrics().heightPixels-dp(70));
+                        topInfoLp.x=Math.max(0,Math.min(maxX,startX+Math.round(e.getRawX()-downX)));
+                        topInfoLp.y=Math.max(0,Math.min(maxY,startY+Math.round(e.getRawY()-downY)));
+                        try{wm.updateViewLayout(topInfoBar,topInfoLp);}catch(Exception ignored){}
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        v.setPressed(false);
+                        prefs.edit().putInt("banner_x",topInfoLp.x)
+                                .putInt("banner_y",topInfoLp.y).apply();
+                        return true;
+                    default:
+                        return true;
+                }
+            }
+        });
+        try{wm.addView(topInfoBar,topInfoLp);}catch(Exception e){
+            topInfoBar=null; topInfoText=null; topInfoLp=null;
         }
     }
 
@@ -1498,7 +1535,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(statusBox!=null){try{wm.removeView(statusBox);}catch(Exception ignored){}}
         }
         signalCard=null; infoCardPinned=false; infoDetails=null; statusBox=null; statusText=null; symbolText=null; timingText=null; liveText=null;
-        topInfoBar=null; topInfoText=null;
+        topInfoBar=null; topInfoText=null; topInfoLp=null;
     }
 
     private String collectVisibleText(AccessibilityNodeInfo root){
