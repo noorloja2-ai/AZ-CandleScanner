@@ -1217,17 +1217,21 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 || p.contains("THREE INSIDE DOWN") || p.contains("THREE OUTSIDE DOWN")
                 || p.contains("FALLING THREE");
 
-        double newestPressure=.48*state.sequenceBias+.34*state.momentum
-                +.18*state.lastDirection;
-        boolean conflicts=(bullish && newestPressure<-.14)
-                || (bearish && newestPressure>.14);
+        double newestPressure=.36*state.sequenceBias+.24*state.momentum
+                +.16*state.lastDirection+.24*state.recentTwoDirection;
+        boolean newestBearish=state.recentTwoDirection<-.20 || state.lastDirection<-.38;
+        boolean newestBullish=state.recentTwoDirection>.20 || state.lastDirection>.38;
+        boolean conflicts=(bullish && (newestPressure<-.10 || newestBearish))
+                || (bearish && (newestPressure>.10 || newestBullish));
         if(conflicts)return "NOT CONFIRMED";
 
         // Multi-candle names need meaningful agreement from the newest sequence;
         // a single wide coloured candle must not masquerade as three candles.
         boolean multi=p.contains("THREE WHITE SOLDIERS") || p.contains("THREE BLACK CROWS")
                 || p.contains("THREE BULLISH") || p.contains("THREE BEARISH");
-        if(multi && Math.abs(state.sequenceBias)<.24)return "NOT CONFIRMED";
+        if(multi && (Math.abs(state.sequenceBias)<.24
+                || (bullish && state.recentTwoDirection<=.08)
+                || (bearish && state.recentTwoDirection>=-.08)))return "NOT CONFIRMED";
         return p;
     }
 

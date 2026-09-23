@@ -9,14 +9,16 @@ public class CandleVision {
     public static class BoardState {
         public final double trend, momentum, lastDirection, body, upperWick, lowerWick;
         public final double pricePosition, volatilityRatio, sequenceBias, acceleration;
+        public final double recentTwoDirection;
 
         BoardState(double trend,double momentum,double lastDirection,double body,
                    double upperWick,double lowerWick,double pricePosition,double volatilityRatio,
-                   double sequenceBias,double acceleration){
+                   double sequenceBias,double acceleration,double recentTwoDirection){
             this.trend=trend; this.momentum=momentum; this.lastDirection=lastDirection;
             this.body=body; this.upperWick=upperWick; this.lowerWick=lowerWick;
             this.pricePosition=pricePosition; this.volatilityRatio=volatilityRatio;
             this.sequenceBias=sequenceBias; this.acceleration=acceleration;
+            this.recentTwoDirection=recentTwoDirection;
         }
 
         /** Compact quantized state so similar broker-board histories share learning. */
@@ -318,7 +320,7 @@ public class CandleVision {
         prior/=Math.max(1,pc);
         double accel=pc==0?0:Math.max(-1,Math.min(1,recent-prior));
 
-        return new BoardState(trend,mom,last,body,uw,lw,pos,vr,seq,accel);
+        return new BoardState(trend,mom,last,body,uw,lw,pos,vr,seq,accel,recent);
     }
 
     private static Analysis empty() {

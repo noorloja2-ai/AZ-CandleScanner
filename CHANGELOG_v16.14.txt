@@ -1,0 +1,8 @@
+AZ CandleScanner v16.14
+
+- Gives the newest two detected candle regions priority over older trend structure.
+- Immediately invalidates bullish pattern names after strong recent bearish pressure.
+- Immediately invalidates bearish pattern names after strong recent bullish pressure.
+- Requires current directional agreement before displaying Three White Soldiers, Three Black Crows or similar multi-candle labels.
+- Conflicting labels show PATTERN: NOT CONFIRMED and remain NO TRADE.
+- Preserves local learning, shared learning, notifications and banner settings.
