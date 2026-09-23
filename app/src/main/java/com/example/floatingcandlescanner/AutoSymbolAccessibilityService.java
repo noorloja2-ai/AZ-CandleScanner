@@ -157,8 +157,14 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event){
         try{
-            if(event!=null && event.getPackageName()!=null)
-                lastActivePackage=event.getPackageName().toString();
+            if(event!=null && event.getPackageName()!=null){
+                String eventPackage=event.getPackageName().toString();
+                // Never learn a pair back from AZ's own banner/card text. Doing
+                // so can make a previously selected symbol look permanently
+                // current after the broker has changed to another asset.
+                if(getPackageName().equals(eventPackage))return;
+                lastActivePackage=eventPackage;
+            }
 
             AccessibilityNodeInfo root=getRootInActiveWindow();
             if(root==null)return;
@@ -509,7 +515,11 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     }
 
     private boolean analyzeBitmap(Bitmap b,boolean liveRefresh,boolean automatic,long targetBoundary){
-        refreshDetectedContext();
+        boolean pairVerified=refreshDetectedContext();
+        if(!pairVerified){
+            showPairNotVerified();
+            return false;
+        }
         String asset=currentAsset();
         learner.setAsset(asset);
         CandleVision.Analysis a=analyzeWithAutoCalibration(b);
@@ -1313,11 +1323,13 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
 
     /** Refresh pair/timeframe on every scan; some canvas brokers do not emit a
      * reliable accessibility event when their asset dropdown changes. */
-    private void refreshDetectedContext(){
+    private boolean refreshDetectedContext(){
         AccessibilityNodeInfo root=null;
         try{
             root=getRootInActiveWindow();
-            if(root==null)return;
+            if(root==null)return false;
+            CharSequence rootPackage=root.getPackageName();
+            if(rootPackage!=null && getPackageName().contentEquals(rootPackage))return false;
             String visible=collectVisibleText(root);
             String symbol=detectSymbol(visible),timeframe=detectTimeframe(visible);
             long now=System.currentTimeMillis();
@@ -1337,9 +1349,39 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(timeframe!=null&&!timeframe.isEmpty())edit.putString("detected_timeframe",timeframe)
                     .putString("last_valid_timeframe",timeframe).putLong("detected_timeframe_time",now);
             edit.apply();
+            return symbol!=null&&!symbol.isEmpty();
         }catch(Exception ignored){}finally{
             if(root!=null)try{root.recycle();}catch(Exception ignored){}
         }
+        return false;
+    }
+
+    private void showPairNotVerified(){
+        main.post(()->{
+            if(!scannerEnabled())return;
+            showStatusOverlay("READY");
+            clearStrongSignalCard();
+            cancelSignalNotification();
+            if(quickDecision!=null)quickDecision.reset();
+            lastQuickPopupKey="";
+            if(statusText!=null){
+                statusText.setText("PAIR NOT VERIFIED — NO TRADE");
+                statusText.setTextColor(Color.rgb(251,191,36));
+            }
+            if(liveText!=null){
+                liveText.setText("AI LIVE • PAIR NOT VERIFIED");
+                liveText.setTextColor(Color.rgb(251,191,36));
+            }
+            if(bannerMonitorEnabled()){
+                if(topInfoText==null)createTopInfoBar();
+                if(topInfoText!=null){
+                    topInfoText.setText("NEXT CANDLE: NO TRADE\n"+
+                            "PAIR NOT VERIFIED\n"+
+                            "Open the broker chart and keep the pair name visible");
+                    topInfoText.setTextColor(Color.rgb(250,204,21));
+                }
+            }
+        });
     }
 
     private void showSignalCard(SignalResult r,int horizon,int c){
@@ -1753,9 +1795,11 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(a.equals(b))continue;
             int s=Math.max(0,m.start()-24),e=Math.min(u.length(),m.end()+24);
             boolean otc=u.substring(s,e).contains("OTC");
-            // Prefer an OTC-labelled selector and, for equal candidates, the
-            // latest visible occurrence instead of retaining an older overlay.
-            int score=(otc?100000:0)+m.start();
+            // Prefer an OTC-labelled selector and then the earliest visible
+            // occurrence. Broker headers are exposed before lower controls;
+            // choosing the last occurrence allowed hidden/stale selector text
+            // (or an old AZ overlay on some Android versions) to win.
+            int score=(otc?100000:0)-m.start();
             if(score>=bestScore){bestScore=score;best=a+"/"+b+(otc?" OTC":"");}
         }
         return best;
