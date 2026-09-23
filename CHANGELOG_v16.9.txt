@@ -1,0 +1,8 @@
+CandleScanner AZ v16.9
+
+- Fixes automatic update detection when GitHub/CDN returns a stale update manifest.
+- Adds cache-busting and no-cache request headers to every update check.
+- Includes the top broker-board information banner with candle/setup name,
+  BUY/SELL/NO TRADE, confidence, timeframe, and GOOD/POOR/BEST market status.
+- Preserves licence, notifications, statistics, local learning and shared learning.
+- Android still requires the user to confirm APK installation.
