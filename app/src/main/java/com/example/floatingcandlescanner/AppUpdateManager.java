@@ -62,11 +62,18 @@ public final class AppUpdateManager {
     private boolean checkDriveManifest(boolean showNoUpdateMessage) {
         HttpURLConnection c = null;
         try {
-            c = (HttpURLConnection) new URL(UPDATE_MANIFEST_URL).openConnection();
+            // A unique query and no-cache headers prevent GitHub/CDN from returning
+            // an older update.json after a new APK has already been published.
+            String freshManifestUrl = UPDATE_MANIFEST_URL + "?t=" + System.currentTimeMillis();
+            c = (HttpURLConnection) new URL(freshManifestUrl).openConnection();
+            c.setUseCaches(false);
+            c.setDefaultUseCaches(false);
             c.setConnectTimeout(9000);
             c.setReadTimeout(9000);
             c.setInstanceFollowRedirects(true);
             c.setRequestProperty("User-Agent", "Floating-Candle-Scanner-Android");
+            c.setRequestProperty("Cache-Control", "no-cache, no-store, max-age=0");
+            c.setRequestProperty("Pragma", "no-cache");
             int code = c.getResponseCode();
             if (code < 200 || code >= 300) return false;
 

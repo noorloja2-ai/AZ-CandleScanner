@@ -1,7 +1,8 @@
 {
-  "version": "16.8",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.8/CandleScanner_v16.8.apk",
-  "apkName": "CandleScanner_v16.8.apk",
-  "notes": "V16.8 adds the Master Candlestick Guide confirmation layer. Named patterns strengthen signals only with trend or support/resistance context; indecision patterns remain WAIT.",
-  "build": 76
+  "version": "16.9",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.9/CandleScanner_v16.9.apk",
+  "apkName": "CandleScanner_v16.9.apk",
+  "notes": "V16.9 fixes automatic update detection by bypassing stale GitHub/CDN cache responses. It also includes the top broker-board candle information banner.",
+  "build": 77,
+  "publishedAt": "2026-09-23T14:53:00Z"
 }
