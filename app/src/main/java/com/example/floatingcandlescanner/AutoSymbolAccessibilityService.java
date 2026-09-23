@@ -764,7 +764,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         }
         int minimum=prefs.getInt("quick_decision_threshold",82);
         if("POOR".equals(market) || pct<minimum || "WAIT".equals(r.label))direction="NO TRADE";
-        String pattern=shortSetup(r);
+        String pattern=validatedBannerPattern(r);
         if(pattern.isEmpty() || "MULTI-FACTOR CONFLUENCE".equals(pattern))pattern="NOT DETECTED";
         long entryAt=predictionTargetStartMs>System.currentTimeMillis()
                 ?predictionTargetStartMs:nextBoundary(System.currentTimeMillis(),Math.max(1,horizon));
@@ -1192,6 +1192,43 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         }
         if(r.structure!=null&&!r.structure.trim().isEmpty())return r.structure.toUpperCase(Locale.US);
         return "MULTI-FACTOR CONFLUENCE";
+    }
+
+    /**
+     * Do not display a visually detected candle name when it disagrees with the
+     * newest chart pressure. Fixed-width screen sampling can occasionally split
+     * one wide candle into several coloured regions; this guard prevents those
+     * regions from being presented as a multi-candle pattern.
+     */
+    private String validatedBannerPattern(SignalResult r){
+        String pattern=shortSetup(r);
+        if(pattern==null || pattern.trim().isEmpty())return "NOT DETECTED";
+        String p=pattern.toUpperCase(Locale.US);
+        CandleVision.BoardState state=lastAnalysis==null?null:lastAnalysis.boardState;
+        if(state==null)return p;
+
+        boolean bullish=p.contains("BULL") || p.contains("WHITE SOLDIER")
+                || p.contains("MORNING") || p.contains("HAMMER")
+                || p.contains("PIERCING") || p.contains("THREE INSIDE UP")
+                || p.contains("THREE OUTSIDE UP") || p.contains("RISING THREE");
+        boolean bearish=p.contains("BEAR") || p.contains("BLACK CROW")
+                || p.contains("EVENING") || p.contains("SHOOTING STAR")
+                || p.contains("HANGING MAN") || p.contains("DARK CLOUD")
+                || p.contains("THREE INSIDE DOWN") || p.contains("THREE OUTSIDE DOWN")
+                || p.contains("FALLING THREE");
+
+        double newestPressure=.48*state.sequenceBias+.34*state.momentum
+                +.18*state.lastDirection;
+        boolean conflicts=(bullish && newestPressure<-.14)
+                || (bearish && newestPressure>.14);
+        if(conflicts)return "NOT CONFIRMED";
+
+        // Multi-candle names need meaningful agreement from the newest sequence;
+        // a single wide coloured candle must not masquerade as three candles.
+        boolean multi=p.contains("THREE WHITE SOLDIERS") || p.contains("THREE BLACK CROWS")
+                || p.contains("THREE BULLISH") || p.contains("THREE BEARISH");
+        if(multi && Math.abs(state.sequenceBias)<.24)return "NOT CONFIRMED";
+        return p;
     }
 
     private void showSignalCard(SignalResult r,int horizon,int c){

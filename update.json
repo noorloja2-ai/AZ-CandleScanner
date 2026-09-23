@@ -1,8 +1,8 @@
 {
-  "version": "16.12",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.12/CandleScanner_v16.12.apk",
-  "apkName": "CandleScanner_v16.12.apk",
-  "notes": "V16.12 keeps the live banner updating every second without displaying refresh-speed text.",
-  "build": 80,
-  "publishedAt": "2026-09-23T17:55:00Z"
+  "version": "16.13",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.13/CandleScanner_v16.13.apk",
+  "apkName": "CandleScanner_v16.13.apk",
+  "notes": "V16.13 rejects stale or conflicting candlestick names and shows PATTERN: NOT CONFIRMED when recent market pressure disagrees.",
+  "build": 81,
+  "publishedAt": "2026-09-23T20:55:00Z"
 }

@@ -1,0 +1,8 @@
+AZ CandleScanner v16.13
+
+- Validates the displayed candlestick pattern against the newest chart pressure.
+- Rejects bullish pattern names during clear recent bearish movement and vice versa.
+- Prevents one wide candle from being displayed as a three-candle pattern.
+- Shows PATTERN: NOT CONFIRMED when a detected shape conflicts with recent direction.
+- Keeps NO TRADE when market structure is poor or conflicting.
+- Preserves banner monitoring, notifications and all learning data.
