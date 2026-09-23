@@ -1,3 +1,11 @@
+# AZ CandleScanner v16.8 - Master Candlestick Guide
+
+The uploaded Master Candlestick & Price Action Guide is connected to the live
+signal pipeline through the existing 38-pattern detector. A recognized pattern
+strengthens BUY/SELL only when the candle is confirmed and agrees with trend or
+a measured support/resistance boundary. Doji and Spinning Top remain WAIT.
+Licence, statistics, notifications and self-learning are preserved.
+
 # CandleScanner v14.9 — Quick Decision + Broker Board Learning
 
 This version keeps every v14.8 pressure/pattern feature and adds a fast live-decision gate. AZ scans the broker board roughly every second, reuses only previously validated board-history memory, and waits for repeated agreement before showing **QUICK BUY** or **QUICK SELL**.

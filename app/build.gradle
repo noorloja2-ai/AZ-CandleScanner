@@ -1,7 +1,7 @@
 plugins { id 'com.android.application' }
 android {
  namespace 'com.example.floatingcandlescanner'; compileSdk 35
- defaultConfig { applicationId 'com.example.floatingcandlescanner.az'; minSdk 26; targetSdk 35; versionCode 75; versionName '16.7' }
+ defaultConfig { applicationId 'com.example.floatingcandlescanner.az'; minSdk 26; targetSdk 35; versionCode 76; versionName '16.8' }
  buildFeatures { buildConfig true }
  signingConfigs {
   permanent {
