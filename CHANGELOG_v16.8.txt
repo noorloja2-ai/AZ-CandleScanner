@@ -1,0 +1,10 @@
+CandleScanner AZ v16.8
+
+- Adds the Master Candlestick & Price Action Guide as a signal-confirmation layer.
+- Covers Hammer, Inverted Hammer, Shooting Star, Hanging Man, Engulfing, Harami,
+  Piercing Line, Dark Cloud Cover, Morning/Evening Star, Three Soldiers/Crows,
+  Tweezers, Doji/Spinning Top, Double Top/Bottom and Breakout/Retest knowledge.
+- Requires a confirmed pattern plus trend or support/resistance context.
+- Keeps Doji and Spinning Top as WAIT/indecision instead of forced BUY/SELL.
+- Preserves licence, notifications, monthly/yearly scores and local/shared learning.
+- Screenshot-derived patterns remain confirmation inputs and do not guarantee wins.

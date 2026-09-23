@@ -111,6 +111,12 @@ public final class CandlestickBibleEngine {
 
         Pick pick=new Pick();
 
+        // v16.8 Master Guide patterns use the canonical named-pattern detector.
+        // A candle name is never a signal by itself: confirmation plus trend or
+        // a measured support/resistance location is mandatory below.
+        ReferencePatternEngine.Result masterGuide = ReferencePatternEngine.analyze(
+                d,y,range,body,upper,lower,s,k,rg.trend);
+
         // -------- Basic geometry / source patterns --------
         boolean bullPin=lw>=Math.max(.46,b*1.75) && uw<=.23 && b<=.46;
         boolean bearPin=uw>=Math.max(.46,b*1.75) && lw<=.23 && b<=.46;
@@ -122,6 +128,19 @@ public final class CandlestickBibleEngine {
         double price=p[last];
         boolean nearSupport=price<=rg.support+rg.tol*1.35;
         boolean nearResistance=price>=rg.resistance-rg.tol*1.35;
+
+        if(masterGuide.strong()){
+            boolean bull=masterGuide.directionalScore>0;
+            boolean level=bull?nearSupport:nearResistance;
+            boolean trendAligned=bull?rg.trend>.20:rg.trend<-.20;
+            if(level||trendAligned){
+                double dir=clamp(masterGuide.directionalScore*.88,-.82,.82);
+                double conf=clamp(.58+.22*masterGuide.confidence
+                        +(level?.06:0)+(trendAligned?.04:0),.58,.88);
+                pick.add("MASTER GUIDE: "+masterGuide.name,dir,conf,
+                        level?.15:.23,true,trendAligned,level,rg.range,false,true);
+            }
+        }
 
         // -------- 8/21 MA dynamic support/resistance from the book --------
         double ema8=ema(p,8,n),ema21=ema(p,21,n);

@@ -1,7 +1,7 @@
 {
-  "version": "16.7",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.7/CandleScanner_v16.7.apk",
-  "apkName": "CandleScanner_v16.7.apk",
-  "notes": "V16.7 fixes verified live signal notifications, adds a notification test and Android settings shortcut, and adds repository security automation.",
-  "build": 75
+  "version": "16.8",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.8/CandleScanner_v16.8.apk",
+  "apkName": "CandleScanner_v16.8.apk",
+  "notes": "V16.8 adds the Master Candlestick Guide confirmation layer. Named patterns strengthen signals only with trend or support/resistance context; indecision patterns remain WAIT.",
+  "build": 76
 }
