@@ -1,0 +1,5 @@
+AZ CandleScanner v16.12
+
+- Banner information continues refreshing automatically every second.
+- Removed visible "1s refresh" and "AI LIVE 1s" wording from the interface.
+- Signal calculation, notifications, learning and banner controls are unchanged.

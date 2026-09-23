@@ -645,7 +645,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(!scannerEnabled())return;
             showStatusOverlay("READY");
             if(liveText!=null){
-                liveText.setText(text+" • 1s refresh");
+                liveText.setText(text);
                 liveText.setTextColor(Color.rgb(125,211,252));
             }
         });
@@ -680,7 +680,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 }else{
                     String q=quick==null?"":(" • "+(quick.highChance?verified.status:"NO TRADE")+" "+quick.confirmations+"/6");
                     lastLiveStatus="AI LIVE • "+lastLiveDirection+" "+pct+"% • M"+horizon+q;
-                    liveText.setText("AI LIVE 1s • "+(buy?"BUY ":"SELL ")+pct+"% • M"+horizon+q+
+                    liveText.setText("AI LIVE • "+(buy?"BUY ":"SELL ")+pct+"% • M"+horizon+q+
                             (prefs.getBoolean("broker_board_learning",true)?" • BOARD "+learned:""));
                     liveText.setTextColor(buy?Color.rgb(134,239,172):Color.rgb(252,165,165));
                     if(quick!=null && statusText!=null && quick.reason.startsWith("NO TRADE:")){
@@ -1054,7 +1054,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         String finalSignal=lastDirection.isEmpty()?"FINAL: waiting for completed candle"
                 :"FINAL: "+lastDirection+" "+lastDirectionPercent+"% • ENTRY "+clock(predictionTargetStartMs);
         String live=lastLiveDirection.isEmpty()?lastLiveStatus
-                :"AI LIVE: "+lastLiveDirection+" "+lastLivePercent+"% • 1s refresh";
+                :"AI LIVE: "+lastLiveDirection+" "+lastLivePercent+"%";
         infoDetails.setText(
                 "Chart: "+currentAsset()+" • M"+horizon+"\n"+
                 "Recommended trade: "+tradeDuration(horizon)+"\n"+
@@ -1064,7 +1064,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 entryState(now,predictionTargetStartMs)+"\n"+
                 winRateText()+"\n\n"+
                 "NEXT CANDLE: "+clock(next)+" • "+countdown(next-now)+"\n"+
-                "LIVE = 1s AI refresh • FINAL = after candle close");
+                "LIVE analysis • FINAL = after candle close");
     }
 
     private String marketConditionSummary(){
