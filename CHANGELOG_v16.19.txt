@@ -1,0 +1,9 @@
+AZ CandleScanner v16.19
+
+- Fixes stale/wrong pair names after changing the broker asset.
+- Ignores accessibility events originating from AZ's own overlay.
+- Verifies the broker pair again before every live or completed-candle scan.
+- Shows PAIR NOT VERIFIED — NO TRADE when the pair name cannot be confirmed.
+- Blocks BUY/SELL popups, notifications and learning while the pair is unverified.
+- Prefers the broker header pair over hidden or stale selector text.
+- Keeps v16.18 Safe Mode, optional Automatic Pattern mode and all existing local/shared learning data.
