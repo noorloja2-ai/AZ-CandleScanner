@@ -1,8 +1,8 @@
 {
-  "version": "16.18",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.18/CandleScanner_v16.18.apk",
-  "apkName": "CandleScanner_v16.18.apk",
-  "notes": "V16.18 adds optional Automatic Pattern BUY/SELL with isolated learning. OFF keeps safer confirmation filters; experimental outcomes cannot alter Safe Mode.",
-  "build": 86,
-  "publishedAt": "2026-09-23T22:30:00Z"
+  "version": "16.19",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.19/CandleScanner_v16.19.apk",
+  "apkName": "CandleScanner_v16.19.apk",
+  "notes": "V16.19 verifies the broker pair on every scan, prevents AZ overlay text from retaining a stale pair, and blocks signals and learning with PAIR NOT VERIFIED — NO TRADE when the pair cannot be confirmed.",
+  "build": 87,
+  "publishedAt": "2026-09-23T22:45:00Z"
 }
