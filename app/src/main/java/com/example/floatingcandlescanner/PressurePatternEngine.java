@@ -137,8 +137,25 @@ public final class PressurePatternEngine {
         // Three-candle families.
         boolean morningStar = p2 < -.22 && Math.abs(p1) <= .20 && n > .24 && (atSupport || prior5 < -.14);
         boolean eveningStar = p2 > .22 && Math.abs(p1) <= .20 && n < -.24 && (atResistance || prior5 > .14);
-        boolean threeWhite = p2 > .14 && p1 > .14 && n > .14 && b2 >= .28 && b1 >= .28 && b0 >= .28;
-        boolean threeBlack = p2 < -.14 && p1 < -.14 && n < -.14 && b2 >= .28 && b1 >= .28 && b0 >= .28;
+        // Three White Soldiers / Three Black Crows require three substantial
+        // completed bodies, progressive closes and no sharp loss of body size.
+        // Three same-colour candles alone are not enough.
+        boolean bullProgress = safe(y, e - 2) > safe(y, e - 1) && safe(y, e - 1) > safe(y, e);
+        boolean bearProgress = safe(y, e - 2) < safe(y, e - 1) && safe(y, e - 1) < safe(y, e);
+        boolean bullStalled = b2 > b1 * 1.18 && b1 > b0 * 1.12;
+        boolean bearStalled = b2 > b1 * 1.18 && b1 > b0 * 1.12;
+        boolean threeWhite = p2 > .16 && p1 > .16 && n > .16
+                && b2 >= .38 && b1 >= .34 && b0 >= .34
+                && b1 >= b2 * .55 && b0 >= b1 * .55
+                && bullProgress && !bullStalled;
+        boolean threeBlack = p2 < -.16 && p1 < -.16 && n < -.16
+                && b2 >= .38 && b1 >= .34 && b0 >= .34
+                && b1 >= b2 * .55 && b0 >= b1 * .55
+                && bearProgress && !bearStalled;
+        boolean bullishAdvanceStalled = p2 > .14 && p1 > .10 && n > .08 && bullProgress
+                && (bullStalled || b0 < .30) && (atResistance || trend > .18);
+        boolean bearishDeclineStalled = p2 < -.14 && p1 < -.10 && n < -.08 && bearProgress
+                && (bearStalled || b0 < .30) && (atSupport || trend < -.18);
         boolean threeInsideUp = e >= s + 2 && safe(d, e - 2) < -.20 && safe(d, e - 1) > -.08
                 && safe(body, e - 1) <= safe(body, e - 2) * .72 && n > .22;
         boolean threeInsideDown = e >= s + 2 && safe(d, e - 2) > .20 && safe(d, e - 1) < .08
@@ -175,6 +192,8 @@ public final class PressurePatternEngine {
         else if (bearEngulf) { name="BEARISH ENGULFING"; pattern=-.78; patternStrength=.85; reversal=prior5>.05 || atResistance; continuation=!reversal; }
         else if (bullKicker) { name="BULLISH KICKER"; pattern=.76; patternStrength=.82; reversal=true; }
         else if (bearKicker) { name="BEARISH KICKER"; pattern=-.76; patternStrength=.82; reversal=true; }
+        else if (bullishAdvanceStalled) { name="BULLISH ADVANCE STALLED"; pattern=-.18; patternStrength=.62; continuation=false; reversal=atResistance; }
+        else if (bearishDeclineStalled) { name="BEARISH DECLINE STALLED"; pattern=.18; patternStrength=.62; continuation=false; reversal=atSupport; }
         else if (threeWhite) { name="THREE WHITE SOLDIERS"; pattern=.70; patternStrength=.80; continuation=trend>=-.05; reversal=!continuation; }
         else if (threeBlack) { name="THREE BLACK CROWS"; pattern=-.70; patternStrength=.80; continuation=trend<=.05; reversal=!continuation; }
         else if (piercing) { name="PIERCING LINE"; pattern=.66; patternStrength=.74; reversal=true; }

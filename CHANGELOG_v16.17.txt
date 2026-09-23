@@ -1,0 +1,7 @@
+AZ CandleScanner v16.17
+
+- Requires three substantial completed bodies and progressive closes before naming Three White Soldiers or Three Black Crows.
+- Rejects the three-candle label when bodies shrink sharply or the last completed candle is too small.
+- Shows BULLISH ADVANCE STALLED or BEARISH DECLINE STALLED for weakening same-direction sequences.
+- Labels unconfirmed structure-only breaks as LOCAL BULL BREAKOUT or LOCAL BEAR BREAKOUT.
+- Keeps completed-candle-only analysis, NO TRADE protection, pair/timeframe refresh, local learning and shared learning.

@@ -279,9 +279,13 @@ public final class CandlestickKnowledgeEngine {
 
             boolean risingCenters=y.get(a)>y.get(b)&&y.get(b)>y.get(c);
             boolean fallingCenters=y.get(a)<y.get(b)&&y.get(b)<y.get(c);
-            if(sa>0&&sb>0&&sc>0&&ba>=.34&&bb>=.34&&bc>=.34&&risingCenters)
+            boolean healthyBullBodies=ba>=.40&&bb>=.36&&bc>=.36&&bb>=ba*.55&&bc>=bb*.55;
+            boolean healthyBearBodies=ba>=.40&&bb>=.36&&bc>=.36&&bb>=ba*.55&&bc>=bb*.55;
+            boolean shrinkingBull=ba>bb*1.18&&bb>bc*1.12;
+            boolean shrinkingBear=ba>bb*1.18&&bb>bc*1.12;
+            if(sa>0&&sb>0&&sc>0&&healthyBullBodies&&risingCenters&&!shrinkingBull)
                 p.add("THREE WHITE SOLDIERS","MOMENTUM",+.82,.86,.18,3,true,ctx);
-            if(sa<0&&sb<0&&sc<0&&ba>=.34&&bb>=.34&&bc>=.34&&fallingCenters)
+            if(sa<0&&sb<0&&sc<0&&healthyBearBodies&&fallingCenters&&!shrinkingBear)
                 p.add("THREE BLACK CROWS","MOMENTUM",-.82,.86,.18,3,true,ctx);
 
             boolean bInside=bTop>=aTop-tol&&bBot<=aBot+tol&&bb<=ba*.75;
@@ -315,9 +319,13 @@ public final class CandlestickKnowledgeEngine {
 
             // Advance Block / Stalled Pattern: three bullish candles with shrinking
             // bodies and increasing upper rejection near resistance.
-            if(sa>0&&sb>0&&sc>0&&up&&resistance&&ba>bb&&bb>bc&&
-                    clip01(upper.get(c))>=clip01(upper.get(b))){
-                p.add("ADVANCE BLOCK / STALLED PATTERN","EXHAUSTION",-.50,.64,.50,1,true,ctx);
+            if(sa>0&&sb>0&&sc>0&&risingCenters&&(up||resistance)&&
+                    (shrinkingBull||bc<.30||clip01(upper.get(c))>=clip01(upper.get(b)))){
+                p.add("BULLISH ADVANCE STALLED","EXHAUSTION",-.50,.66,.48,1,true,ctx);
+            }
+            if(sa<0&&sb<0&&sc<0&&fallingCenters&&(down||support)&&
+                    (shrinkingBear||bc<.30||clip01(lower.get(c))>=clip01(lower.get(b)))){
+                p.add("BEARISH DECLINE STALLED","EXHAUSTION",+.50,.66,.48,1,true,ctx);
             }
         }
 

@@ -515,7 +515,7 @@ public final class TradingBrain {
     private static String structureText(
             double trend,double structure,double breakout,double pullback){
         if(Math.abs(breakout)>.48)
-            return breakout>0?"BULL BREAKOUT":"BEAR BREAKOUT";
+            return breakout>0?"LOCAL BULL BREAKOUT":"LOCAL BEAR BREAKOUT";
         if(Math.abs(pullback)>.42)
             return pullback>0?"BULL PULLBACK":"BEAR PULLBACK";
         if(trend>.25&&structure>.15)return "HIGHER STRUCTURE";
