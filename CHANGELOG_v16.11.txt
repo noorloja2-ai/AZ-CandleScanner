@@ -1,0 +1,9 @@
+AZ CandleScanner v16.11
+
+- Added ENABLE/DISABLE BANNER MONITOR with saved state.
+- Closing the banner disables only the banner; signal notifications remain active.
+- Banner now shows NEXT CANDLE BUY, SELL or NO TRADE.
+- Added confidence score, candlestick pattern, market condition, correct detected pair/timeframe and entry time.
+- Poor, weak, mixed or below-threshold conditions now show NO TRADE without a misleading high percentage.
+- When no named candlestick pattern is confirmed, the banner shows PATTERN: NOT DETECTED while market direction continues to be calculated.
+- Existing learning, notification and draggable-position behavior is preserved.

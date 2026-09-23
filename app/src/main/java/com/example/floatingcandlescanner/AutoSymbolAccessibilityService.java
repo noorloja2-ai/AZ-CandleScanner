@@ -214,6 +214,26 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         }
     }
 
+    public static void setBannerMonitorEnabled(Context c,boolean enabled){
+        c.getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+                .putBoolean("banner_monitor_enabled",enabled).apply();
+        AutoSymbolAccessibilityService s=instance;
+        if(s==null)return;
+        s.main.post(()->{
+            if(enabled && s.scannerEnabled()){
+                s.createTopInfoBar();
+                if(s.topInfoBar!=null)s.topInfoBar.setVisibility(View.VISIBLE);
+            }else{
+                s.removeTopInfoBar();
+            }
+        });
+    }
+
+    private boolean bannerMonitorEnabled(){
+        if(prefs==null)prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
+        return prefs.getBoolean("banner_monitor_enabled",true);
+    }
+
     private boolean scannerEnabled(){
         if(prefs==null)prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
         return prefs.getBoolean("scanner_enabled",false);
@@ -731,16 +751,28 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
 
     /** Top broker-board banner requested for the marked chart-header space. */
     private void updateTopInfoBar(SignalResult r,int horizon,QuickDecisionEngine.Result quick){
-        if(topInfoText==null || r==null)return;
+        if(!bannerMonitorEnabled() || r==null)return;
+        if(topInfoText==null)createTopInfoBar();
+        if(topInfoText==null)return;
         boolean buy=r.buyProbability>=r.sellProbability;
+        String market=marketCondition(r);
         String direction="WAIT".equals(r.label)?"NO TRADE":(buy?"BUY":"SELL");
         int pct=Math.max(r.buyProbability,r.sellProbability);
         if(quick!=null && quick.highChance){
             direction=quick.label;
             pct=quick.score;
         }
-        topInfoText.setText(shortSetup(r)+"  •  "+direction+" "+pct+"%\n"+
-                currentAsset()+"  •  M"+Math.max(1,horizon)+"  •  MARKET "+marketCondition(r));
+        int minimum=prefs.getInt("quick_decision_threshold",82);
+        if("POOR".equals(market) || pct<minimum || "WAIT".equals(r.label))direction="NO TRADE";
+        String pattern=shortSetup(r);
+        if(pattern.isEmpty() || "MULTI-FACTOR CONFLUENCE".equals(pattern))pattern="NOT DETECTED";
+        long entryAt=predictionTargetStartMs>System.currentTimeMillis()
+                ?predictionTargetStartMs:nextBoundary(System.currentTimeMillis(),Math.max(1,horizon));
+        String entry=new SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(new Date(entryAt));
+        String score="NO TRADE".equals(direction)?"":" • "+pct+"%";
+        topInfoText.setText("NEXT CANDLE: "+direction+score+"\n"+
+                "PATTERN: "+pattern+" • MARKET: "+market+"\n"+
+                currentAsset()+" • M"+Math.max(1,horizon)+" • ENTRY "+entry);
         topInfoText.setTextColor("NO TRADE".equals(direction)
                 ?Color.rgb(250,204,21):("BUY".equals(direction)
                 ?Color.rgb(134,239,172):Color.rgb(252,165,165)));
@@ -758,7 +790,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     }
 
     private void createTopInfoBar(){
-        if(wm==null || topInfoBar!=null)return;
+        if(wm==null || topInfoBar!=null || !bannerMonitorEnabled())return;
         topInfoBar=new LinearLayout(this);
         topInfoBar.setOrientation(LinearLayout.HORIZONTAL);
         topInfoBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -770,12 +802,12 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         topInfoBar.setBackground(bg);
 
         topInfoText=new TextView(this);
-        topInfoText.setText("AZ ANALYSING LIVE CHART…\nPATTERN • DIRECTION • MARKET");
+        topInfoText.setText("AZ ANALYSING LIVE CHART…\nNEXT CANDLE • PATTERN • MARKET\nENTRY TIME");
         topInfoText.setTextSize(11);
         topInfoText.setTypeface(null,Typeface.BOLD);
         topInfoText.setGravity(Gravity.CENTER);
         topInfoText.setTextColor(Color.rgb(125,211,252));
-        topInfoBar.addView(topInfoText,new LinearLayout.LayoutParams(0,dp(48),1));
+        topInfoBar.addView(topInfoText,new LinearLayout.LayoutParams(0,dp(66),1));
 
         TextView hide=new TextView(this);
         hide.setText("×");
@@ -785,7 +817,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         hide.setTextColor(Color.WHITE);
         hide.setContentDescription("Hide AZ information banner");
         topInfoBar.addView(hide,new LinearLayout.LayoutParams(dp(28),dp(40)));
-        hide.setOnClickListener(v->topInfoBar.setVisibility(View.GONE));
+        hide.setOnClickListener(v->setBannerMonitorEnabled(this,false));
 
         topInfoLp=new WindowManager.LayoutParams(
                 dp(330),WindowManager.LayoutParams.WRAP_CONTENT,
@@ -836,10 +868,15 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         }
     }
 
+    private void removeTopInfoBar(){
+        if(wm!=null && topInfoBar!=null){try{wm.removeView(topInfoBar);}catch(Exception ignored){}}
+        topInfoBar=null; topInfoText=null; topInfoLp=null;
+    }
+
     private void showStatusOverlay(String state){
         if(wm==null)wm=(WindowManager)getSystemService(WINDOW_SERVICE);
         if(statusBox!=null)return;
-        createTopInfoBar();
+        if(bannerMonitorEnabled())createTopInfoBar();
 
         // Normal broker view stays clean: only the round AZ logo is visible.
         statusBox=new LinearLayout(this);

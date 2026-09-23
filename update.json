@@ -1,8 +1,8 @@
 {
-  "version": "16.10",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.10/CandleScanner_v16.10.apk",
-  "apkName": "CandleScanner_v16.10.apk",
-  "notes": "V16.10 lets you press and drag the broker-screen information banner and remembers its position. Existing learning and signals are preserved.",
-  "build": 78,
-  "publishedAt": "2026-09-23T15:05:00Z"
+  "version": "16.11",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.11/CandleScanner_v16.11.apk",
+  "apkName": "CandleScanner_v16.11.apk",
+  "notes": "V16.11 adds a saved banner monitor switch and a clear next-candle BUY, SELL or NO TRADE banner with confidence, pattern, market condition and entry time.",
+  "build": 79,
+  "publishedAt": "2026-09-23T17:45:00Z"
 }

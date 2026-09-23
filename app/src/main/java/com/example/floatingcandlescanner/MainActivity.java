@@ -26,7 +26,7 @@ public class MainActivity extends Activity {
     TextView status,cropText,sensText,learnText,autoSymbolText;
     TextView licenceExpiryText;
     TextView monthWin,monthLoss,monthTotal,yearWin,yearLoss,yearTotal;
-    Button overviewToggle;
+    Button overviewToggle,bannerMonitorToggle;
     OnlineLearner learner;
     AppUpdateManager updateManager;
     ViewFlipper pager;
@@ -80,7 +80,7 @@ public class MainActivity extends Activity {
         h.addView(logo,new LinearLayout.LayoutParams(dp(66),dp(66)));
         LinearLayout words=new LinearLayout(this); words.setOrientation(LinearLayout.VERTICAL);
         TextView brand=tx("AZ  NEURAL SCANNER",19,Color.WHITE); brand.setTypeface(null,Typeface.BOLD);
-        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.7",11,CYAN);
+        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.11",11,CYAN);
         words.addView(brand); words.addView(sub); h.addView(words,new LinearLayout.LayoutParams(0,-2,1));
         return h;
     }
@@ -128,6 +128,19 @@ public class MainActivity extends Activity {
         LinearLayout r=column(); section(r,"FLOATING SCANNER");
         Button start=cyberButton("START FLOATING TAP SCAN",CYAN); start.setOnClickListener(v->startScan()); r.addView(start);
         Button stop=cyberButton("STOP SCAN",Color.rgb(248,113,113)); stop.setOnClickListener(v->stopScan()); r.addView(stop);
+        section(r,"BROKER BANNER");
+        bannerMonitorToggle=cyberButton("",CYAN);
+        bannerMonitorToggle.setOnClickListener(v->{
+            boolean enabled=!prefs.getBoolean("banner_monitor_enabled",true);
+            AutoSymbolAccessibilityService.setBannerMonitorEnabled(this,enabled);
+            updateBannerMonitorToggle();
+            if(status!=null)status.setText(enabled
+                    ?"BANNER MONITOR ENABLED • Open the broker chart"
+                    :"BANNER MONITOR DISABLED • Signal notifications stay active");
+        });
+        r.addView(bannerMonitorToggle);
+        updateBannerMonitorToggle();
+        note(r,"The movable banner shows the next-candle decision, confidence score, pattern, market condition and entry time. Notifications work separately.");
         section(r,"AUTOMATIC CHART RECOGNITION");
         autoSymbolText=tx("Detected chart: checking…",14,Color.rgb(167,243,208)); r.addView(autoSymbolText,space(-1,-2,8));
         String[] values={"AUTO","M1","M2","M3","M4","M5"};
@@ -217,7 +230,7 @@ public class MainActivity extends Activity {
 
     LinearLayout buildUpdate(){
         LinearLayout r=column(); section(r,"AZ APP UPDATE");
-        TextView current=tx("CURRENT VERSION  16.7",18,CYAN); current.setTypeface(null,Typeface.BOLD);
+        TextView current=tx("CURRENT VERSION  16.11",18,CYAN); current.setTypeface(null,Typeface.BOLD);
         current.setGravity(Gravity.CENTER); current.setPadding(0,dp(25),0,dp(20)); r.addView(current);
         updateManager=new AppUpdateManager(this,status);
         Button update=cyberButton("CHECK / UPDATE APP",CYAN); update.setOnClickListener(v->updateManager.checkForUpdate(true)); r.addView(update);
@@ -238,7 +251,7 @@ public class MainActivity extends Activity {
     }
 
     @Override protected void onResume(){ super.onResume(); if(learner!=null){learner.setAsset(currentDetectedAsset());updateLearning();updateDashboard();}
-        updateAutoSymbol(); CommunityLearningSync.refreshAndFlushAsync(this);
+        updateAutoSymbol(); updateBannerMonitorToggle(); CommunityLearningSync.refreshAndFlushAsync(this);
         if(pendingAccessibilityStart&&AutoSymbolAccessibilityService.isConnected()){pendingAccessibilityStart=false;startScan();}}
     @Override protected void onDestroy(){if(updateManager!=null)updateManager.destroy();super.onDestroy();}
 
@@ -298,6 +311,9 @@ public class MainActivity extends Activity {
     void updateOverviewToggle(){if(overviewToggle==null)return;boolean active=scannerActive();
         overviewToggle.setText(active?"SHUTDOWN SCANNER":"START SCANNER");
         overviewToggle.setBackground(cardBg(active?Color.rgb(248,113,113):CYAN));}
+    void updateBannerMonitorToggle(){if(bannerMonitorToggle==null)return;boolean enabled=prefs.getBoolean("banner_monitor_enabled",true);
+        bannerMonitorToggle.setText(enabled?"DISABLE BANNER MONITOR":"ENABLE BANNER MONITOR");
+        bannerMonitorToggle.setBackground(cardBg(enabled?Color.rgb(248,113,113):CYAN));}
 
     void addCheck(LinearLayout r,String label,String key,boolean def,int color){CheckBox c=new CheckBox(this);c.setText(label);c.setTextColor(color);c.setChecked(prefs.getBoolean(key,def));c.setOnCheckedChangeListener((b,v)->prefs.edit().putBoolean(key,v).apply());r.addView(c);}
     void addSeek(LinearLayout r,String label,String key,int min,int max,int def,String suffix){TextView value=tx(label+": "+prefs.getInt(key,def)+suffix,14,Color.WHITE);r.addView(value);SeekBar b=new SeekBar(this);b.setMax(max-min);b.setProgress(prefs.getInt(key,def)-min);b.setOnSeekBarChangeListener(new SimpleSeek(){public void onProgressChanged(SeekBar s,int p,boolean u){int v=min+p;value.setText(label+": "+v+suffix);if(u)prefs.edit().putInt(key,v).apply();}});r.addView(b);}
