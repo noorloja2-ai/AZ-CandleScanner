@@ -840,15 +840,27 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 || p.contains("WHITE SOLDIER") || p.contains("THREE INSIDE UP")
                 || p.contains("THREE OUTSIDE UP") || p.contains("RISING THREE")
                 || p.contains("TWEEZER BOTTOM") || p.contains("INVERTED HAMMER")
-                || p.contains("LOWER-WICK BUYER") || p.contains("BUY PRESSURE");
+                || p.contains("LOWER-WICK BUYER") || p.contains("BUY PRESSURE")
+                || containsAny(p,"LADDER BOTTOM","MATCHING LOW","STICK SANDWICH",
+                "HOMING PIGEON","THREE STARS IN THE SOUTH","THREE RIVER BOTTOM",
+                "UNIQUE THREE RIVER","RISING WINDOW","UPSIDE TASUKI GAP");
         boolean bearish=gravestone || p.contains("BEAR") || p.contains("EVENING")
                 || p.contains("SHOOTING STAR") || p.contains("HANGING MAN")
                 || p.contains("DARK CLOUD") || p.contains("BLACK CROW")
                 || p.contains("THREE INSIDE DOWN") || p.contains("THREE OUTSIDE DOWN")
                 || p.contains("FALLING THREE") || p.contains("UPPER-WICK SELLER")
                 || p.contains("TWEEZER TOP")
-                || p.contains("SELL PRESSURE");
+                || p.contains("SELL PRESSURE")
+                || containsAny(p,"LADDER TOP","MATCHING HIGH","ADVANCE BLOCK",
+                "STALLED PATTERN","DELIBERATION","FALLING WINDOW",
+                "DOWNSIDE TASUKI GAP","IDENTICAL THREE CROWS");
         return bullish==bearish?"":(bullish?"BUY":"SELL");
+    }
+
+    private static boolean containsAny(String text,String... names){
+        if(text==null)return false;
+        for(String name:names)if(text.contains(name))return true;
+        return false;
     }
 
     private String marketCondition(SignalResult r){
@@ -1293,17 +1305,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         CandleVision.BoardState state=lastAnalysis==null?null:lastAnalysis.boardState;
         if(state==null)return p;
 
-        boolean bullish=p.contains("BULL") || p.contains("WHITE SOLDIER")
-                || p.contains("MORNING") || p.contains("HAMMER")
-                || p.contains("PIERCING") || p.contains("THREE INSIDE UP")
-                || p.contains("THREE OUTSIDE UP") || p.contains("RISING THREE")
-                || p.contains("DRAGONFLY DOJI") || p.contains("TWEEZER BOTTOM");
-        boolean bearish=p.contains("BEAR") || p.contains("BLACK CROW")
-                || p.contains("EVENING") || p.contains("SHOOTING STAR")
-                || p.contains("HANGING MAN") || p.contains("DARK CLOUD")
-                || p.contains("THREE INSIDE DOWN") || p.contains("THREE OUTSIDE DOWN")
-                || p.contains("FALLING THREE") || p.contains("GRAVESTONE DOJI")
-                || p.contains("TWEEZER TOP");
+        String mappedDirection=directionFromPattern(p);
+        boolean bullish="BUY".equals(mappedDirection);
+        boolean bearish="SELL".equals(mappedDirection);
 
         double newestPressure=.36*state.sequenceBias+.24*state.momentum
                 +.16*state.lastDirection+.24*state.recentTwoDirection;
