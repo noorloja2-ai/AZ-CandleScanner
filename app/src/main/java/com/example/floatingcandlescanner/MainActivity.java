@@ -80,7 +80,7 @@ public class MainActivity extends Activity {
         h.addView(logo,new LinearLayout.LayoutParams(dp(66),dp(66)));
         LinearLayout words=new LinearLayout(this); words.setOrientation(LinearLayout.VERTICAL);
         TextView brand=tx("AZ  NEURAL SCANNER",19,Color.WHITE); brand.setTypeface(null,Typeface.BOLD);
-        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.24",11,CYAN);
+        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.25",11,CYAN);
         words.addView(brand); words.addView(sub); h.addView(words,new LinearLayout.LayoutParams(0,-2,1));
         return h;
     }
@@ -232,7 +232,7 @@ public class MainActivity extends Activity {
 
     LinearLayout buildUpdate(){
         LinearLayout r=column(); section(r,"AZ APP UPDATE");
-        TextView current=tx("CURRENT VERSION  16.24",18,CYAN); current.setTypeface(null,Typeface.BOLD);
+        TextView current=tx("CURRENT VERSION  16.25",18,CYAN); current.setTypeface(null,Typeface.BOLD);
         current.setGravity(Gravity.CENTER); current.setPadding(0,dp(25),0,dp(20)); r.addView(current);
         updateManager=new AppUpdateManager(this,status);
         Button update=cyberButton("CHECK / UPDATE APP",CYAN); update.setOnClickListener(v->updateManager.checkForUpdate(true)); r.addView(update);
@@ -295,7 +295,7 @@ public class MainActivity extends Activity {
                 .append("\nSYNC  ").append(CommunityLearningSync.status(this)).append("\n\n");
         for(int i=0;i<5;i++){int n=learner.totalSamples(i);s.append("M").append(i+1).append("  ").append(n).append(" samples");
             if(n>0)s.append(" • ").append(learner.accuracyPct(i)).append("% all-time • ").append(learner.recentAccuracyPct(i)).append("% recent");
-            s.append("\n").append(learner.verification(i).summary());if(i<4)s.append("\n\n");}
+            s.append("\n").append(learner.verification(i).summary());\n            if(learner.driftDetected(i))s.append("\nMARKET DRIFT • rollback active (")\n                    .append(learner.rollbackCount(i)).append(")");\n            else if(learner.totalSamples(i)<30)s.append("\nLOCAL LEARNING LOCKED • ")\n                    .append(learner.totalSamples(i)).append("/30");\n            if(i<4)s.append("\n\n");}
         s.append(all<150?"\n\nCalibration is still building.":"\n\nLearned calibration is active.");learnText.setText(s.toString());}
 
     void startScan(){if(Build.VERSION.SDK_INT<30){status.setText("Android 11 or newer is required.");return;}
