@@ -1,8 +1,8 @@
 {
-  "version": "16.24",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.24/CandleScanner_v16.24.apk",
-  "apkName": "CandleScanner_v16.24.apk",
-  "notes": "Medium Chance is removed from AZ. Safer Mode and Pattern Mode now issue BUY/SELL and notifications only at 85% or higher.",
-  "build": 92,
-  "publishedAt": "2026-09-24T20:45:00Z"
+  "version": "16.25",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.25/CandleScanner_v16.25.apk",
+  "apkName": "CandleScanner_v16.25.apk",
+  "notes": "Self-Learning Safety: 30-sample activation, pair/timeframe/pattern quality, recent weighting, market-drift detection and automatic rollback.",
+  "build": 93,
+  "publishedAt": "2026-09-24T21:10:00Z"
 }
