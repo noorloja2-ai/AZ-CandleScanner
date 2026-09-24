@@ -1,8 +1,8 @@
 {
-  "version": "16.20",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.20/CandleScanner_v16.20.apk",
-  "apkName": "CandleScanner_v16.20.apk",
-  "notes": "V16.20 makes strong confirmed candlestick patterns directly control BUY/SELL in Automatic Pattern mode, adds directional Dragonfly/Gravestone Doji handling, and removes market condition from the broker banner.",
-  "build": 88,
-  "publishedAt": "2026-09-24T00:10:00Z"
+  "version": "16.21",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.21/CandleScanner_v16.21.apk",
+  "apkName": "CandleScanner_v16.21.apk",
+  "notes": "V16.21 removes Market Condition completely from AZ displays. Pattern Mode produces BUY/SELL only from strong completed and confirmed directional patterns; all other cases remain NO TRADE.",
+  "build": 89,
+  "publishedAt": "2026-09-24T10:00:00Z"
 }

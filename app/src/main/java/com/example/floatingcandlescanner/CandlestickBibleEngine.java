@@ -7,7 +7,7 @@ import java.util.List;
  * Strategy layer derived from the user's uploaded 168-page Candlestick Trading Bible.
  *
  * The book repeatedly frames price-action trading as three questions:
- *   1) trend / market condition,
+ *   1) trend and price-action context,
  *   2) key level,
  *   3) price-action signal.
  * It also emphasizes confluence, completed-candle confirmation, avoiding choppy

@@ -140,7 +140,7 @@ public class MainActivity extends Activity {
         });
         r.addView(bannerMonitorToggle);
         updateBannerMonitorToggle();
-        note(r,"The movable banner shows the next-candle decision, confidence score, pattern, market condition and entry time. Notifications work separately.");
+        note(r,"The movable banner shows the next-candle decision, confidence score, confirmed pattern, trend and entry time. Notifications work separately.");
         section(r,"AUTOMATIC CHART RECOGNITION");
         autoSymbolText=tx("Detected chart: checking…",14,Color.rgb(167,243,208)); r.addView(autoSymbolText,space(-1,-2,8));
         String[] values={"AUTO","M1","M2","M3","M4","M5"};
