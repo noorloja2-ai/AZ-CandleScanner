@@ -591,14 +591,20 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         // learner. Its outcomes go to a separate local store and never update
         // OnlineLearner or the validated community-learning queue.
         boolean automaticPatterns=prefs.getBoolean("auto_pattern_signals",false);
+        boolean officialPostClose=automatic && targetBoundary>0L;
         if(automaticPatterns){
             // Pattern Mode may issue an official direction only from the
             // broker-aligned post-close scan. Live/manual frames can describe
             // the chart, but cannot recycle an older pattern into a new trade.
-            if(automatic && targetBoundary>0L)
+            if(officialPostClose)
                 decision=applyAutomaticPatternSignal(decision,a.boardState);
             else
                 decision=patternNoTrade(decision,"WAITING FOR LATEST CANDLE CLOSE");
+        }else if(!officialPostClose){
+            // Safer Mode follows the same timing rule as Pattern Mode: a live
+            // or manually captured unfinished candle may update observations,
+            // but it can never become an actionable next-candle signal.
+            decision=patternNoTrade(decision,"WAITING FOR LATEST CANDLE CLOSE");
         }
         if(automatic && targetBoundary>0L && patternLearning!=null){
             patternLearning.resolveAndRecord(targetBoundary,asset,selectedH,selectedH+1,
@@ -606,13 +612,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         }
 
         if(liveRefresh){
-            QuickDecisionEngine.Result quick=null;
-            if(!automaticPatterns && prefs.getBoolean("quick_decision",true)
-                    && quickDecision!=null && a.boardState!=null){
-                int quickThreshold=Math.max(78,Math.min(90,prefs.getInt("quick_decision_threshold",82)));
-                quick=quickDecision.update(asset,horizon,a.boardState,decision,quickThreshold);
-            }
-            showLiveDecision(decision,horizon,quick);
+            // Live Quick Decision remains disabled in both modes so it cannot
+            // override the completed-candle gate with an intrabar BUY/SELL.
+            showLiveDecision(decision,horizon,null);
             return true;
         }
 
@@ -688,6 +690,22 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(!scannerEnabled()||r==null)return;
             showStatusOverlay("READY");
             updateTopInfoBar(r,horizon,quick);
+            if("WAIT".equals(r.label)){
+                lastLiveDirection="";
+                lastLivePercent=0;
+                lastLiveStatus="AI LIVE • WAITING FOR CANDLE CLOSE";
+                clearStrongSignalCard();
+                if(liveText!=null){
+                    liveText.setText("AI LIVE • NO TRADE • WAITING FOR CANDLE CLOSE");
+                    liveText.setTextColor(Color.rgb(250,204,21));
+                }
+                if(statusText!=null){
+                    statusText.setText("NO TRADE • WAITING FOR COMPLETED CANDLE");
+                    statusText.setTextColor(Color.rgb(250,204,21));
+                }
+                refreshInfoCard(System.currentTimeMillis());
+                return;
+            }
             boolean buy=r.buyProbability>=r.sellProbability;
             int pct=Math.max(r.buyProbability,r.sellProbability);
             lastLiveDirection=buy?"BUY":"SELL";
@@ -743,6 +761,18 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(!scannerEnabled())return;
             showStatusOverlay("READY");
             updateTopInfoBar(r,horizon,null);
+            if(r==null || "WAIT".equals(r.label)){
+                lastDirection="";
+                lastDirectionPercent=0;
+                lastSignalHorizon=horizon;
+                clearStrongSignalCard();
+                if(statusText!=null){
+                    statusText.setText("NO TRADE • WAITING FOR COMPLETED CANDLE");
+                    statusText.setTextColor(Color.rgb(250,204,21));
+                }
+                updateSymbolText();
+                return;
+            }
             boolean buyLead=r.buyProbability>=r.sellProbability;
             lastDirection=buyLead?"BUY":"SELL";
             lastDirectionPercent=Math.max(r.buyProbability,r.sellProbability);
