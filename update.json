@@ -2,7 +2,7 @@
   "version": "16.27",
   "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.27/CandleScanner_v16.27.apk",
   "apkName": "CandleScanner_v16.27.apk",
-  "apkSha256": "7ad3b7c3fb1d0f2c55fd203e1fb273e9e35ae70b035901450ceddd2c9e1b42ee",
+  "apkSha256": "f14263e24f6d2dff4cc8fada658ed17bd0b34e37334d5b11f0f4baa86421de38",
   "notes": "Pair recognition fix: USD/CLP OTC and additional Latin American currency pairs are now verified correctly. Signal-safety filters are unchanged.",
   "build": 95,
   "publishedAt": "2026-09-24T23:45:00Z"
