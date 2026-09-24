@@ -1,0 +1,8 @@
+AZ CandleScanner v16.24
+
+- Pattern Mode no longer issues Medium Chance signals or notifications.
+- Pattern Mode requires at least 85% strength for BUY or SELL.
+- 85-89% remains HIGH CHANCE and 90-100% remains VERY HIGH CONFIDENCE.
+- Pattern setups below 85% show NO TRADE.
+- Safer Mode thresholds and behaviour are unchanged.
+- Keeps persistent notifications, automatic updates and all existing learning data.
