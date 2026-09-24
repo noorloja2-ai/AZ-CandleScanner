@@ -1,0 +1,7 @@
+AZ CandleScanner v16.23
+
+- Fixes automatic update detection by publishing a new version code and version name.
+- BUY/SELL popup notifications stay visible during one-second Safer Mode refreshes.
+- WAIT and NO TRADE refreshes cannot remove an open signal popup.
+- Signal popup closes only when the user presses CLOSE, stops the scanner, or the service shuts down.
+- Preserves all v16.22 scanner rules, patterns, local training and shared learning data.
