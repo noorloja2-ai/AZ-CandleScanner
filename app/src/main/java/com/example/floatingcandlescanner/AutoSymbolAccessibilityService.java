@@ -609,7 +609,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             // but it can never become an actionable next-candle signal.
             decision=patternNoTrade(decision,"WAITING FOR LATEST CANDLE CLOSE");
         }
-        // Medium Chance has been removed from the app. Both Safer Mode and
+        // Pair + timeframe are selected by OnlineLearner.setAsset/horizon;\n        // pattern quality adds the third segmentation dimension after 30 outcomes.\n        decision=learner.applySetupQuality(selectedH,decision);\n\n        // Medium Chance has been removed from the app. Both Safer Mode and
         // Pattern Mode require High Chance (85%+) for an actionable direction.
         if ("BUY".equals(decision.label) || "SELL".equals(decision.label)) {
             int finalPercent="BUY".equals(decision.label)
