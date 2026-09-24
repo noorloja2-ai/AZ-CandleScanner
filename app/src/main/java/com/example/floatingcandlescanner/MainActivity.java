@@ -80,7 +80,7 @@ public class MainActivity extends Activity {
         h.addView(logo,new LinearLayout.LayoutParams(dp(66),dp(66)));
         LinearLayout words=new LinearLayout(this); words.setOrientation(LinearLayout.VERTICAL);
         TextView brand=tx("AZ  NEURAL SCANNER",19,Color.WHITE); brand.setTypeface(null,Typeface.BOLD);
-        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.18",11,CYAN);
+        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.22",11,CYAN);
         words.addView(brand); words.addView(sub); h.addView(words,new LinearLayout.LayoutParams(0,-2,1));
         return h;
     }
@@ -232,7 +232,7 @@ public class MainActivity extends Activity {
 
     LinearLayout buildUpdate(){
         LinearLayout r=column(); section(r,"AZ APP UPDATE");
-        TextView current=tx("CURRENT VERSION  16.18",18,CYAN); current.setTypeface(null,Typeface.BOLD);
+        TextView current=tx("CURRENT VERSION  16.22",18,CYAN); current.setTypeface(null,Typeface.BOLD);
         current.setGravity(Gravity.CENTER); current.setPadding(0,dp(25),0,dp(20)); r.addView(current);
         updateManager=new AppUpdateManager(this,status);
         Button update=cyberButton("CHECK / UPDATE APP",CYAN); update.setOnClickListener(v->updateManager.checkForUpdate(true)); r.addView(update);
