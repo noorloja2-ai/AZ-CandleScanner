@@ -1,8 +1,9 @@
 AZ CandleScanner v16.24
 
-- Pattern Mode no longer issues Medium Chance signals or notifications.
-- Pattern Mode requires at least 85% strength for BUY or SELL.
-- 85-89% remains HIGH CHANCE and 90-100% remains VERY HIGH CONFIDENCE.
-- Pattern setups below 85% show NO TRADE.
-- Safer Mode thresholds and behaviour are unchanged.
-- Keeps persistent notifications, automatic updates and all existing learning data.
+- Medium Chance is removed from the entire app.
+- Safer Mode and Pattern Mode both require at least 85% for BUY or SELL.
+- 85-89% is HIGH CHANCE and 90-100% is VERY HIGH CONFIDENCE.
+- Every setup below 85% shows NO TRADE and creates no popup or Android notification.
+- The Controls page cannot set signal or sound thresholds below 85%.
+- Keeps persistent notifications, automatic update checks and all existing learning data.
+- Android still requires user approval before installing a downloaded APK update.
