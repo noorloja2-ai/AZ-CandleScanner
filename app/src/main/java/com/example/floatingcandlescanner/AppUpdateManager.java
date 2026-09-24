@@ -12,9 +12,11 @@ import android.widget.Toast;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.MessageDigest;
 
 /**
  * Simple self-update helper for privately distributed APK builds.
@@ -30,6 +32,7 @@ public final class AppUpdateManager {
     private final Activity activity;
     private final TextView status;
     private long downloadId = -1L;
+    private String expectedSha256 = "";
     private boolean receiverRegistered = false;
 
     private final BroadcastReceiver downloadReceiver = new BroadcastReceiver() {
@@ -88,6 +91,7 @@ public final class AppUpdateManager {
             String apkFileId = manifest.optString("apkFileId", "").trim();
             String apkName = manifest.optString("apkName", "").trim();
             String notes = manifest.optString("notes", "").trim();
+            String sha256 = manifest.optString("apkSha256", "").trim().toLowerCase();
             if (apkUrl.isEmpty() && !apkFileId.isEmpty()) {
                 apkUrl = "https://drive.google.com/uc?export=download&id=" + apkFileId;
             }
@@ -97,7 +101,8 @@ public final class AppUpdateManager {
             final String fUrl = apkUrl;
             final String fName = apkName;
             final String fNotes = notes;
-            activity.runOnUiThread(() -> handleRelease(fVersion, fBuild, fUrl, fName, fNotes, showNoUpdateMessage));
+            final String fSha256 = sha256;
+            activity.runOnUiThread(() -> handleRelease(fVersion, fBuild, fUrl, fName, fNotes, fSha256, showNoUpdateMessage));
             return true;
         } catch (Exception ignored) {
             return false;
@@ -116,7 +121,7 @@ public final class AppUpdateManager {
     }
 
     private void handleRelease(String latestVersion, int latestBuild, String apkUrl, String apkName,
-                               String notes, boolean showNoUpdateMessage) {
+                               String notes, String sha256, boolean showNoUpdateMessage) {
         String current = BuildConfig.VERSION_NAME;
         int currentBuild = BuildConfig.VERSION_CODE;
         if (latestVersion.isEmpty()) {
@@ -135,6 +140,11 @@ public final class AppUpdateManager {
             if (showNoUpdateMessage) toast("New version found, but no APK was attached.");
             return;
         }
+        if (!sha256.matches("[0-9a-f]{64}")) {
+            setStatus("v" + latestVersion + " is available, but its security checksum is missing.");
+            toast("Update blocked because the APK could not be verified.");
+            return;
+        }
 
         String message = "Installed: v" + current + "\nAvailable: v" + latestVersion;
         if (!notes.isEmpty()) {
@@ -147,12 +157,12 @@ public final class AppUpdateManager {
                 .setMessage(finalMessage)
                 .setNegativeButton("Later", null)
                 .setPositiveButton("Download & Update", (d, which) ->
-                        prepareDownload(apkUrl, apkName, latestVersion))
+                        prepareDownload(apkUrl, apkName, latestVersion, sha256))
                 .show();
         setStatus("Update v" + latestVersion + " is available.");
     }
 
-    private void prepareDownload(String url, String name, String version) {
+    private void prepareDownload(String url, String name, String version, String sha256) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                 !activity.getPackageManager().canRequestPackageInstalls()) {
             new AlertDialog.Builder(activity)
@@ -167,10 +177,10 @@ public final class AppUpdateManager {
                     .show();
             return;
         }
-        downloadApk(url, name, version);
+        downloadApk(url, name, version, sha256);
     }
 
-    private void downloadApk(String url, String name, String version) {
+    private void downloadApk(String url, String name, String version, String sha256) {
         try {
             String fileName = (name == null || name.trim().isEmpty())
                     ? "CandleScanner_v" + version + ".apk"
@@ -185,6 +195,7 @@ public final class AppUpdateManager {
             request.setDestinationInExternalFilesDir(activity, Environment.DIRECTORY_DOWNLOADS, fileName);
 
             DownloadManager dm = (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
+            expectedSha256 = sha256;
             downloadId = dm.enqueue(request);
             ensureReceiver();
             setStatus("Downloading CandleScanner v" + version + "…");
@@ -224,6 +235,13 @@ public final class AppUpdateManager {
             setStatus("Update downloaded, but Android did not return the APK file URI.");
             return;
         }
+        String actual = sha256(uri);
+        if (actual.isEmpty() || !actual.equalsIgnoreCase(expectedSha256)) {
+            setStatus("Update blocked: APK security checksum did not match.");
+            toast("Downloaded update failed security verification and was not installed.");
+            dm.remove(id);
+            return;
+        }
         try {
             Intent install = new Intent(Intent.ACTION_VIEW);
             install.setDataAndType(uri, APK_MIME);
@@ -232,6 +250,21 @@ public final class AppUpdateManager {
             setStatus("Update downloaded — approve the Android installation screen.");
         } catch (Exception e) {
             setStatus("Update downloaded, but installer could not open: " + safeMessage(e));
+        }
+    }
+
+    private String sha256(Uri uri) {
+        try (InputStream in = activity.getContentResolver().openInputStream(uri)) {
+            if (in == null) return "";
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = in.read(buffer)) != -1) digest.update(buffer, 0, count);
+            StringBuilder out = new StringBuilder(64);
+            for (byte b : digest.digest()) out.append(String.format("%02x", b & 0xff));
+            return out.toString();
+        } catch (Exception ignored) {
+            return "";
         }
     }
 
