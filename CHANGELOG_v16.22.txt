@@ -1,0 +1,10 @@
+AZ CandleScanner v16.22
+
+- Safer Mode and Pattern Mode issue BUY/SELL only from the official broker-aligned post-close scan.
+- One-second live refresh and manual mid-candle scans cannot create a trade in either mode.
+- While the newest candle is still open, AZ clearly shows NO TRADE and waits for candle close.
+- A detected pattern must belong to and agree with the newest completed candle.
+- If the latest completed candle contradicts the mapped BUY/SELL direction, AZ shows NO TRADE.
+- Weak patterns below 70, neutral patterns and unconfirmed patterns remain NO TRADE.
+- Quick Decision cannot override either mode during a live candle.
+- Keeps Market Condition removed, preserves v16.21 pattern knowledge, pair verification and all local/shared learning data.

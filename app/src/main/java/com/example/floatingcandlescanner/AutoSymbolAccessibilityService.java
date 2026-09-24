@@ -591,19 +591,30 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         // learner. Its outcomes go to a separate local store and never update
         // OnlineLearner or the validated community-learning queue.
         boolean automaticPatterns=prefs.getBoolean("auto_pattern_signals",false);
-        if(automaticPatterns)decision=applyAutomaticPatternSignal(decision);
+        boolean officialPostClose=automatic && targetBoundary>0L;
+        if(automaticPatterns){
+            // Pattern Mode may issue an official direction only from the
+            // broker-aligned post-close scan. Live/manual frames can describe
+            // the chart, but cannot recycle an older pattern into a new trade.
+            if(officialPostClose)
+                decision=applyAutomaticPatternSignal(decision,a.boardState);
+            else
+                decision=patternNoTrade(decision,"WAITING FOR LATEST CANDLE CLOSE");
+        }else if(!officialPostClose){
+            // Safer Mode follows the same timing rule as Pattern Mode: a live
+            // or manually captured unfinished candle may update observations,
+            // but it can never become an actionable next-candle signal.
+            decision=patternNoTrade(decision,"WAITING FOR LATEST CANDLE CLOSE");
+        }
         if(automatic && targetBoundary>0L && patternLearning!=null){
             patternLearning.resolveAndRecord(targetBoundary,asset,selectedH,selectedH+1,
                     a.latestY,automaticPatterns?decision:null);
         }
 
         if(liveRefresh){
-            QuickDecisionEngine.Result quick=null;
-            if(prefs.getBoolean("quick_decision",true) && quickDecision!=null && a.boardState!=null){
-                int quickThreshold=Math.max(78,Math.min(90,prefs.getInt("quick_decision_threshold",82)));
-                quick=quickDecision.update(asset,horizon,a.boardState,decision,quickThreshold);
-            }
-            showLiveDecision(decision,horizon,quick);
+            // Live Quick Decision remains disabled in both modes so it cannot
+            // override the completed-candle gate with an intrabar BUY/SELL.
+            showLiveDecision(decision,horizon,null);
             return true;
         }
 
@@ -679,6 +690,22 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(!scannerEnabled()||r==null)return;
             showStatusOverlay("READY");
             updateTopInfoBar(r,horizon,quick);
+            if("WAIT".equals(r.label)){
+                lastLiveDirection="";
+                lastLivePercent=0;
+                lastLiveStatus="AI LIVE • WAITING FOR CANDLE CLOSE";
+                clearStrongSignalCard();
+                if(liveText!=null){
+                    liveText.setText("AI LIVE • NO TRADE • WAITING FOR CANDLE CLOSE");
+                    liveText.setTextColor(Color.rgb(250,204,21));
+                }
+                if(statusText!=null){
+                    statusText.setText("NO TRADE • WAITING FOR COMPLETED CANDLE");
+                    statusText.setTextColor(Color.rgb(250,204,21));
+                }
+                refreshInfoCard(System.currentTimeMillis());
+                return;
+            }
             boolean buy=r.buyProbability>=r.sellProbability;
             int pct=Math.max(r.buyProbability,r.sellProbability);
             lastLiveDirection=buy?"BUY":"SELL";
@@ -734,6 +761,18 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(!scannerEnabled())return;
             showStatusOverlay("READY");
             updateTopInfoBar(r,horizon,null);
+            if(r==null || "WAIT".equals(r.label)){
+                lastDirection="";
+                lastDirectionPercent=0;
+                lastSignalHorizon=horizon;
+                clearStrongSignalCard();
+                if(statusText!=null){
+                    statusText.setText("NO TRADE • WAITING FOR COMPLETED CANDLE");
+                    statusText.setTextColor(Color.rgb(250,204,21));
+                }
+                updateSymbolText();
+                return;
+            }
             boolean buyLead=r.buyProbability>=r.sellProbability;
             lastDirection=buyLead?"BUY":"SELL";
             lastDirectionPercent=Math.max(r.buyProbability,r.sellProbability);
@@ -779,11 +818,12 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(topInfoText==null)return;
         String direction="WAIT".equals(r.label)?"NO TRADE":r.label;
         int pct=Math.max(r.buyProbability,r.sellProbability);
-        if(quick!=null && quick.highChance){
+        boolean patternMode=prefs.getBoolean("auto_pattern_signals",false);
+        if(!patternMode && quick!=null && quick.highChance){
             direction=quick.label;
             pct=quick.score;
         }
-        if(!prefs.getBoolean("auto_pattern_signals",false)){
+        if(!patternMode){
             int minimum=prefs.getInt("quick_decision_threshold",82);
             if(pct<minimum || "WAIT".equals(r.label))direction="NO TRADE";
         }
@@ -803,17 +843,29 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 ?Color.rgb(134,239,172):Color.rgb(252,165,165)));
     }
 
-    private SignalResult applyAutomaticPatternSignal(SignalResult r){
+    private SignalResult applyAutomaticPatternSignal(SignalResult r,CandleVision.BoardState state){
         if(r==null)return null;
         String pattern=validatedBannerPattern(r);
         String direction=directionFromPattern(pattern);
-        if(direction.isEmpty())return r;
+        if(direction.isEmpty())return patternNoTrade(r,"NO STRONG CONFIRMED PATTERN");
 
         // Pattern mode is deliberately decisive only for a genuinely strong,
-        // completed and visually confirmed setup. It may override an opposite
-        // base-model label, but never a weak/neutral/unconfirmed pattern.
+        // completed and visually confirmed setup from the newest closed candle.
+        // It may override the base model, but never a weak/neutral/stale setup.
         int strength=Math.max(r.strength,Math.max(r.buyProbability,r.sellProbability));
-        if(strength<70)return r;
+        if(strength<70)return patternNoTrade(r,"PATTERN BELOW 70 STRENGTH");
+        if(state==null)return patternNoTrade(r,"LATEST CANDLE NOT VERIFIED");
+
+        // The newest completed candle must confirm the mapped direction. This
+        // prevents an earlier green Marubozu (for example) from generating BUY
+        // after the latest completed candle has turned strongly red.
+        boolean latestConfirms="BUY".equals(direction)
+                ?state.lastDirection>.12:state.lastDirection<-.12;
+        boolean recentConfirms="BUY".equals(direction)
+                ?state.recentTwoDirection>-.04:state.recentTwoDirection<.04;
+        if(!latestConfirms || !recentConfirms)
+            return patternNoTrade(r,"LATEST CLOSED CANDLE CONTRADICTS "+direction);
+
         int directional=Math.min(100,strength);
         int bp="BUY".equals(direction)?directional:100-directional;
         int sp="SELL".equals(direction)?directional:100-directional;
@@ -821,6 +873,14 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 ". "+r.explanation;
         return new SignalResult(direction,strength,r.score,bp,sp,r.confidence,
                 r.regime,r.rawBuyProbability,r.setupQuality,r.structure,explanation);
+    }
+
+    private SignalResult patternNoTrade(SignalResult r,String reason){
+        if(r==null)return null;
+        String explanation=reason+(r.explanation==null||r.explanation.isEmpty()
+                ?"":". "+r.explanation);
+        return new SignalResult("WAIT",r.strength,r.score,r.buyProbability,r.sellProbability,
+                r.confidence,r.regime,r.rawBuyProbability,r.setupQuality,r.structure,explanation);
     }
 
     private String directionFromPattern(String pattern){
