@@ -1,0 +1,10 @@
+CandleScanner v16.26 - Reliability & Safety
+
+- Added Shadow Testing mode to record outcomes without sending signal notifications.
+- Added per-pattern performance dashboards for every timeframe.
+- Automatically quarantines weak patterns after enough evidence is collected.
+- Added current, previous and quarantined community-model history to diagnostics.
+- Added scanner health diagnostics including last successful scan and notification state.
+- Added privacy-safe CSV export of locally resolved learning data.
+- Verifies every downloaded APK against its published SHA-256 checksum before installation.
+- Keeps the v16.25 learning safeguards: minimum samples, recent weighting, drift detection and rollback.
