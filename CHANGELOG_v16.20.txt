@@ -4,6 +4,7 @@ AZ CandleScanner v16.20
 - Automatic Pattern mode now follows a strong confirmed pattern even when the base model previously pointed the other way.
 - BUY patterns include Hammer, Inverted Hammer, Dragonfly Doji, Bullish Engulfing, Bullish Harami, Morning Star, Three White Soldiers, Piercing Line, Three Inside Up, Three Outside Up, Tweezer Bottom, Bullish Kicker/Abandoned Baby/Belt Hold/Counterattack and Rising Three Methods.
 - SELL patterns include Hanging Man, Shooting Star, Gravestone Doji, Bearish Engulfing, Bearish Harami, Evening Star, Three Black/Red Crows, Dark Cloud Cover, Three Inside Down, Three Outside Down, Tweezer Top, Bearish Kicker/Abandoned Baby/Belt Hold/Counterattack and Falling Three Methods.
+- Extended directional families include Morning/Evening Doji Star, Ladder Bottom/Top, Matching Low/High, Stick Sandwich, Homing Pigeon, Three Stars in the South, Three River Bottom, Unique Three River, Advance Block, Stalled/Deliberation, Rising/Falling Window and Upside/Downside Tasuki Gap. Bullish/Bearish named Breakaway, Mat Hold, Separating Lines and Three-Line Strike variants are also covered by their explicit direction.
 - Plain Doji, Spinning Top, indecision, weak, conflicting and unconfirmed patterns remain NO TRADE.
 - Direct pattern signals require a completed, visually confirmed setup with strength of at least 70.
 - Safe Mode remains available when Automatic Pattern BUY / SELL is OFF.
