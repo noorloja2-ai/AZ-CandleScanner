@@ -434,6 +434,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                         pendingBoundaryMs=Long.MIN_VALUE;
                         lastSuccessfulAutoScanAt=System.currentTimeMillis();
                         lastScreenshotError=0;
+                        if(prefs!=null)prefs.edit().putLong("last_successful_scan_at",System.currentTimeMillis()).apply();
                     }else if(automatic){
                         pendingBoundaryMs=Long.MIN_VALUE;
                     }
@@ -634,10 +635,13 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         // still require the stricter completed-candle quality gates from the base
         // model, while the displayed probability uses the self-decision blend.
         showDirection(decision,horizon);
-        if("BUY".equals(decision.label)||"SELL".equals(decision.label)){
+        boolean shadowMode=prefs.getBoolean("shadow_testing_mode",false);
+        if(("BUY".equals(decision.label)||"SELL".equals(decision.label))&&!shadowMode){
             showStrongSignal(decision,horizon);
         } else {
             clearStrongSignalCard();
+            if(shadowMode && statusText!=null)statusText.setText("SHADOW TEST • "+decision.label+
+                    " recorded without notification");
         }
         return true;
     }
