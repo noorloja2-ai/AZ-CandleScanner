@@ -1,0 +1,6 @@
+CandleScanner v16.27 - Pair Recognition Fix
+
+- Fixed USD/CLP OTC being incorrectly blocked as PAIR NOT VERIFIED.
+- Added recognition for CLP, COP, PEN and ARS broker pairs.
+- Kept the existing safe extended-trend NO TRADE filter unchanged.
+- Kept learning isolated by verified pair and timeframe.

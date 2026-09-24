@@ -29,29 +29,29 @@ jobs:
           AZ_KEY_PASSWORD: ${{ secrets.AZ_KEY_PASSWORD }}
         run: gradle :app:assembleRelease :license-generator:assembleRelease --stacktrace
       - run: |
-          cp app/build/outputs/apk/release/app-release.apk CandleScanner_v16.26.apk
+          cp app/build/outputs/apk/release/app-release.apk CandleScanner_v16.27.apk
           cp license-generator/build/outputs/apk/release/license-generator-release.apk AZ_Licence_Generator_v1.1.apk
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: CandleScanner-v16.26-signed
+          name: CandleScanner-v16.27-signed
           path: |
-            CandleScanner_v16.26.apk
+            CandleScanner_v16.27.apk
             AZ_Licence_Generator_v1.1.apk
       - name: Publish GitHub release
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create v16.26 CandleScanner_v16.26.apk AZ_Licence_Generator_v1.1.apk --title "CandleScanner v16.26" --notes-file CHANGELOG_v16.26.txt --latest || gh release upload v16.26 CandleScanner_v16.26.apk AZ_Licence_Generator_v1.1.apk --clobber
+        run: gh release create v16.27 CandleScanner_v16.27.apk AZ_Licence_Generator_v1.1.apk --title "CandleScanner v16.27" --notes-file CHANGELOG_v16.27.txt --latest || gh release upload v16.27 CandleScanner_v16.27.apk AZ_Licence_Generator_v1.1.apk --clobber
       - name: Publish verified update manifest
         if: github.ref == 'refs/heads/main'
         run: |
-          APK_SHA256=$(sha256sum CandleScanner_v16.26.apk | cut -d' ' -f1)
+          APK_SHA256=$(sha256sum CandleScanner_v16.27.apk | cut -d' ' -f1)
           jq --arg sha "$APK_SHA256" '.apkSha256 = $sha' update.json > update.tmp
           mv update.tmp update.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add update.json
-          git diff --cached --quiet || git commit -m "Publish v16.26 APK checksum [skip ci]"
+          git diff --cached --quiet || git commit -m "Publish v16.27 APK checksum [skip ci]"
           pushed=false
           for attempt in 1 2 3; do
             git pull --rebase origin main && git push && pushed=true && break
