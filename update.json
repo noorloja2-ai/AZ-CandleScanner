@@ -2,7 +2,7 @@
   "version": "16.26",
   "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.26/CandleScanner_v16.26.apk",
   "apkName": "CandleScanner_v16.26.apk",
-  "apkSha256": "234b0818091bc5f2e8d13cc8440ee80443dbf0f5e1dde5ce1dae3b9cb5f5fae9",
+  "apkSha256": "3cc9c2a5aafd69fc12a03d9f29bef96f56c5dc0be7fb12f3d76aa494ead9646d",
   "notes": "Reliability & Safety: shadow testing, pattern performance, weak-pattern quarantine, model history, scanner diagnostics, learning-data export and verified APK updates.",
   "build": 94,
   "publishedAt": "2026-09-24T22:30:00Z"
