@@ -434,6 +434,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                         pendingBoundaryMs=Long.MIN_VALUE;
                         lastSuccessfulAutoScanAt=System.currentTimeMillis();
                         lastScreenshotError=0;
+                        if(prefs!=null)prefs.edit().putLong("last_successful_scan_at",System.currentTimeMillis()).apply();
                     }else if(automatic){
                         pendingBoundaryMs=Long.MIN_VALUE;
                     }
@@ -609,6 +610,15 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             // but it can never become an actionable next-candle signal.
             decision=patternNoTrade(decision,"WAITING FOR LATEST CANDLE CLOSE");
         }
+        // Pair + timeframe are selected by OnlineLearner.setAsset/horizon;\n        // pattern quality adds the third segmentation dimension after 30 outcomes.\n        decision=learner.applySetupQuality(selectedH,decision);\n\n        // Medium Chance has been removed from the app. Both Safer Mode and
+        // Pattern Mode require High Chance (85%+) for an actionable direction.
+        if ("BUY".equals(decision.label) || "SELL".equals(decision.label)) {
+            int finalPercent="BUY".equals(decision.label)
+                    ?decision.buyProbability:decision.sellProbability;
+            if(finalPercent<85)
+                decision=patternNoTrade(decision,"BELOW HIGH CHANCE (85%)");
+        }
+
         if(automatic && targetBoundary>0L && patternLearning!=null){
             patternLearning.resolveAndRecord(targetBoundary,asset,selectedH,selectedH+1,
                     a.latestY,automaticPatterns?decision:null);
@@ -625,10 +635,13 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         // still require the stricter completed-candle quality gates from the base
         // model, while the displayed probability uses the self-decision blend.
         showDirection(decision,horizon);
-        if("BUY".equals(decision.label)||"SELL".equals(decision.label)){
+        boolean shadowMode=prefs.getBoolean("shadow_testing_mode",false);
+        if(("BUY".equals(decision.label)||"SELL".equals(decision.label))&&!shadowMode){
             showStrongSignal(decision,horizon);
         } else {
             clearStrongSignalCard();
+            if(shadowMode && statusText!=null)statusText.setText("SHADOW TEST • "+decision.label+
+                    " recorded without notification");
         }
         return true;
     }
@@ -796,7 +809,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         main.post(()->{
             if(!scannerEnabled()||r==null)return;
             int pct="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
-            if(pct<70){
+            if(pct<85){
                 clearStrongSignalCard();
                 return;
             }
@@ -827,7 +840,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             pct=quick.score;
         }
         if(!patternMode){
-            int minimum=prefs.getInt("quick_decision_threshold",82);
+            int minimum=Math.max(85,prefs.getInt("quick_decision_threshold",85));
             if(pct<minimum || "WAIT".equals(r.label))direction="NO TRADE";
         }
         String pattern=validatedBannerPattern(r);
@@ -856,7 +869,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         // completed and visually confirmed setup from the newest closed candle.
         // It may override the base model, but never a weak/neutral/stale setup.
         int strength=Math.max(r.strength,Math.max(r.buyProbability,r.sellProbability));
-        if(strength<70)return patternNoTrade(r,"PATTERN BELOW 70 STRENGTH");
+        if(strength<85)return patternNoTrade(r,"PATTERN BELOW HIGH CHANCE (85%)");
         if(state==null)return patternNoTrade(r,"LATEST CANDLE NOT VERIFIED");
 
         // The newest completed candle must confirm the mapped direction. This
@@ -1227,6 +1240,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private void showQuickSignalCard(QuickDecisionEngine.Result quick,int horizon){
         if(infoCardPinned)return;
         if(quick==null || !quick.highChance || wm==null)return;
+        if(quick.score<85)return;
         if(signalCardManualCloseOnly && signalCard!=null)return;
         long slot=System.currentTimeMillis()/(Math.max(1,horizon)*60_000L);
         String key=currentAsset()+"|M"+horizon+"|"+quick.label+"|"+slot;
@@ -1482,10 +1496,10 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private void maybeNotify(SignalResult r,int horizon){
         if(r==null || !("BUY".equals(r.label)||"SELL".equals(r.label)))return;
         int pct="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
-        if(pct<70)return;
+        if(pct<85)return;
         OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
 
-        // Every completed-candle BUY/SELL signal at 70%+ gets a visible popup.
+        // Medium Chance is removed: every notification requires High Chance (85%+).
         // Sound remains independently controlled by the user's sound threshold.
         int alertThreshold=Math.max(75,Math.min(90,
                 prefs==null?85:prefs.getInt("sound_alert_threshold",85)));
@@ -1544,6 +1558,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(quick==null || !quick.highChance ||
                 !("BUY".equals(quick.label)||"SELL".equals(quick.label)))return;
         int pct=quick.score;
+        if(pct<85)return;
         int alertThreshold=Math.max(75,Math.min(90,
                 prefs==null?85:prefs.getInt("sound_alert_threshold",85)));
         boolean soundEnabled=prefs==null || prefs.getBoolean("sound_alerts",true);
@@ -1634,8 +1649,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private String confidenceTitle(int score){
         if(score>=90)return "VERY HIGH CONFIDENCE";
         if(score>=85)return "HIGH CHANCE";
-        if(score>=70)return "MEDIUM CHANCE";
-        return "LOW CONFIDENCE";
+        return "NO TRADE";
     }
 
     public static void showLastSignalOverlay(){

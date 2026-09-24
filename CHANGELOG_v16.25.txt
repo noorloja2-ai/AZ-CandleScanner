@@ -1,0 +1,11 @@
+AZ CandleScanner v16.25
+
+- Local calibration activates only after 30 exact-close outcomes for the pair and timeframe.
+- Pattern quality is learned separately for each pair, timeframe and named setup.
+- Pattern quality affects decisions only after 30 verified outcomes in that exact segment.
+- Recent verified outcomes receive a small bounded weight while older knowledge is retained.
+- Market drift is detected when the last 30 verified outcomes fall below 50% accuracy.
+- Automatic rollback restores the last healthy calibration checkpoint.
+- Training page shows learning lock, drift and rollback status.
+- Medium Chance remains removed; all BUY/SELL signals require at least 85%.
+- Preserves existing local samples, community learning and v16.24 behaviour.

@@ -1,8 +1,9 @@
 {
-  "version": "16.23",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.23/CandleScanner_v16.23.apk",
-  "apkName": "CandleScanner_v16.23.apk",
-  "notes": "V16.23 fixes automatic update detection and keeps BUY/SELL notifications visible until the user presses CLOSE.",
-  "build": 91,
-  "publishedAt": "2026-09-24T18:20:00Z"
+  "version": "16.26",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.26/CandleScanner_v16.26.apk",
+  "apkName": "CandleScanner_v16.26.apk",
+  "apkSha256": "",
+  "notes": "Reliability & Safety: shadow testing, pattern performance, weak-pattern quarantine, model history, scanner diagnostics, learning-data export and verified APK updates.",
+  "build": 94,
+  "publishedAt": "2026-09-24T22:30:00Z"
 }

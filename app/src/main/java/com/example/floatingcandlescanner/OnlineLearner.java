@@ -13,6 +13,9 @@ public class OnlineLearner {
     public static final double BREAK_EVEN_92 = 1.0 / 1.92;
     private static final int VERIFIED_MIN_SAMPLES = 200;
     private static final int VERIFIED_MIN_RECENT = 50;
+    private static final int LOCAL_ACTIVATION_SAMPLES = 30;
+    private static final int SETUP_ACTIVATION_SAMPLES = 30;
+    private static final int DRIFT_WINDOW = 30;
     private static final String PREF = "online_learner_v4";
     private final Context context;
     private final SharedPreferences p;
@@ -35,12 +38,23 @@ public class OnlineLearner {
     public synchronized double calibrate(int horizon, double rawP) {
         int n = totalSamples(horizon);
         double local = rawP;
-        if (n >= 10) {
+        // Local calibration activates after 30 exact-close outcomes for this
+        // pair/timeframe and pauses automatically while drift is quarantined.
+        if (n >= LOCAL_ACTIVATION_SAMPLES && !p.getBoolean(k("drift",horizon),false)) {
             double bias = getD(k("bias", horizon), 0.0);
             double scale = getD(k("scale", horizon), 1.0);
             double learned = sigmoid(scale * logit(rawP) + bias);
-            double learnedWeight = Math.min(0.55, n / 250.0 * 0.55);
+            double learnedWeight = Math.min(0.55,
+                    (n-LOCAL_ACTIVATION_SAMPLES+1) / 220.0 * 0.55);
             local = clamp(rawP * (1.0 - learnedWeight) + learned * learnedWeight, 0.10, 0.90);
+            String recent=p.getString(k("recent",horizon),"");
+            if(recent.length()>=20){
+                int rw=0;for(int i=0;i<recent.length();i++)if(recent.charAt(i)=='1')rw++;
+                double recentRate=(double)rw/recent.length();
+                double confidence=Math.min(1.0,recent.length()/50.0);
+                double direction=local>=.5?1.0:-1.0;
+                local=clamp(local+direction*(recentRate-.55)*.10*confidence,.10,.90);
+            }
         }
         // A validated community model from GitHub can add at most 25% weight,
         // so this phone's own learning and the base model remain dominant.
@@ -81,14 +95,33 @@ public class OnlineLearner {
         recent += correct ? "1" : "0";
         if (recent.length() > 50) recent = recent.substring(recent.length() - 50);
 
-        p.edit()
+        SharedPreferences.Editor edit=p.edit()
                 .putLong(k("bias", horizon), Double.doubleToRawLongBits(bias))
                 .putLong(k("scale", horizon), Double.doubleToRawLongBits(scale))
                 .putInt(k("count", horizon), n + 1)
                 .putInt(k("wins", horizon), wins)
                 .putInt(k("losses", horizon), losses)
-                .putString(k("recent", horizon), recent)
-                .apply();
+                .putString(k("recent", horizon), recent);
+
+        // Detect market drift and restore the last healthy local checkpoint.
+        int recentWins=0;
+        for(int i=0;i<recent.length();i++)if(recent.charAt(i)=='1')recentWins++;
+        double recentRate=recent.isEmpty()?1.0:(double)recentWins/recent.length();
+        if(recent.length()>=DRIFT_WINDOW && recentRate<.50){
+            double stableBias=getD(k("stable_bias",horizon),0.0);
+            double stableScale=getD(k("stable_scale",horizon),1.0);
+            boolean alreadyDrifting=p.getBoolean(k("drift",horizon),false);
+            edit.putLong(k("bias",horizon),Double.doubleToRawLongBits(stableBias))
+                    .putLong(k("scale",horizon),Double.doubleToRawLongBits(stableScale))
+                    .putBoolean(k("drift",horizon),true)
+                    .putInt(k("rollbacks",horizon),p.getInt(k("rollbacks",horizon),0)
+                            +(alreadyDrifting?0:1));
+        }else if(recent.length()>=DRIFT_WINDOW && recentRate>=.60){
+            edit.putLong(k("stable_bias",horizon),Double.doubleToRawLongBits(bias))
+                    .putLong(k("stable_scale",horizon),Double.doubleToRawLongBits(scale))
+                    .putBoolean(k("drift",horizon),false);
+        }
+        edit.apply();
     }
 
     public int totalSamples(int horizon) { return p.getInt(k("count", horizon), 0); }
@@ -114,6 +147,35 @@ public class OnlineLearner {
 
     public int recentCount(int horizon) {
         return p.getString(k("recent", horizon), "").length();
+    }
+
+    public boolean driftDetected(int horizon){return p.getBoolean(k("drift",horizon),false);}
+    public int rollbackCount(int horizon){return p.getInt(k("rollbacks",horizon),0);}
+
+    /** Apply pattern quality after 30 outcomes for this pair/timeframe/setup. */
+    public synchronized SignalResult applySetupQuality(int horizon,SignalResult r){
+        if(r==null || !("BUY".equals(r.label)||"SELL".equals(r.label)))return r;
+        String slug=setupSlug(r.structure);
+        if(slug.isEmpty())return r;
+        String prefix=k("setup_"+slug,horizon);
+        int n=p.getInt(prefix+"_n",0),w=p.getInt(prefix+"_w",0);
+        if(n<SETUP_ACTIVATION_SAMPLES)return r;
+        double rate=(double)w/n;
+        double lower=wilsonLower(w,n,1.959963984540054);
+        if(rate<.55 || lower<=BREAK_EVEN_92){
+            return new SignalResult("WAIT",r.strength,r.score,r.buyProbability,
+                    r.sellProbability,r.confidence,r.regime,r.rawBuyProbability,
+                    r.setupQuality,r.structure,"PATTERN QUALITY NO TRADE • "+w+"/"+n+
+                    ". "+r.explanation);
+        }
+        int adjustment=(int)Math.round(clamp((rate-.60)*35.0,-5.0,5.0));
+        int lead="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
+        int adjusted=(int)Math.round(clamp(lead+adjustment,50,95));
+        int bp="BUY".equals(r.label)?adjusted:100-adjusted;
+        int sp="SELL".equals(r.label)?adjusted:100-adjusted;
+        return new SignalResult(r.label,Math.max(r.strength,adjusted),r.score,bp,sp,
+                r.confidence,r.regime,r.rawBuyProbability,r.setupQuality,r.structure,
+                "PATTERN QUALITY "+Math.round(rate*100)+"% ("+n+") • "+r.explanation);
     }
 
     /**
@@ -237,6 +299,25 @@ public class OnlineLearner {
         return best;
     }
 
+    /** Compact per-pattern dashboard for the selected pair and timeframe. */
+    public synchronized String setupReport(int horizon){
+        String keys=p.getString(k("setup_keys",horizon),"");
+        if(keys.isEmpty())return "No resolved pattern samples yet.";
+        StringBuilder out=new StringBuilder();
+        for(String slug:keys.split("\\|")){
+            if(slug.isEmpty())continue;
+            String prefix=k("setup_"+slug,horizon);
+            int n=p.getInt(prefix+"_n",0),w=p.getInt(prefix+"_w",0);
+            String label=p.getString(prefix+"_label",slug.replace('_',' '));
+            int rate=n==0?0:Math.round(100f*w/n);
+            String state=n<30?"LEARNING":(rate<55?"QUARANTINED":(rate>=65?"STRONG":"ACTIVE"));
+            if(out.length()>0)out.append('\n');
+            out.append(label).append(" • ").append(rate).append("% • ")
+                    .append(w).append('/').append(n).append(" • ").append(state);
+        }
+        return out.length()==0?"No resolved pattern samples yet.":out.toString();
+    }
+
     private static String setupSlug(String s) {
         if (s == null) return "";
         String x = s.trim().toUpperCase(Locale.US);
@@ -270,7 +351,9 @@ public class OnlineLearner {
             }
             e.remove(k("setup_keys",h));
             e.remove(k("bias",h)).remove(k("scale",h)).remove(k("count",h))
-             .remove(k("wins",h)).remove(k("losses",h)).remove(k("recent",h));
+             .remove(k("wins",h)).remove(k("losses",h)).remove(k("recent",h))
+             .remove(k("stable_bias",h)).remove(k("stable_scale",h))
+             .remove(k("drift",h)).remove(k("rollbacks",h));
         }
         e.apply();
     }
