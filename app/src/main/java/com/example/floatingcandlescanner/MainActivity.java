@@ -15,11 +15,14 @@ import android.view.animation.AnimationUtils;
 import android.widget.*;
 
 import java.text.SimpleDateFormat;
+import java.io.FileInputStream;
+import java.io.OutputStream;
 import java.util.Date;
 import java.util.Locale;
 
 /** Cyber dashboard. Use the top menu to open each user-facing page. */
 public class MainActivity extends Activity {
+    private static final int EXPORT_TRAINING_REQUEST=3107;
     private static final int CYAN=Color.rgb(34,211,238), BLUE=Color.rgb(37,99,235);
     private static final int CARD=Color.rgb(10,24,47);
     SharedPreferences prefs;
@@ -80,7 +83,7 @@ public class MainActivity extends Activity {
         h.addView(logo,new LinearLayout.LayoutParams(dp(66),dp(66)));
         LinearLayout words=new LinearLayout(this); words.setOrientation(LinearLayout.VERTICAL);
         TextView brand=tx("AZ  NEURAL SCANNER",19,Color.WHITE); brand.setTypeface(null,Typeface.BOLD);
-        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.25",11,CYAN);
+        TextView sub=tx("LIVE SIGNAL SYSTEM • v16.26",11,CYAN);
         words.addView(brand); words.addView(sub); h.addView(words,new LinearLayout.LayoutParams(0,-2,1));
         return h;
     }
@@ -159,6 +162,7 @@ public class MainActivity extends Activity {
     LinearLayout buildControls(){
         LinearLayout r=column(); section(r,"SIGNAL CONTROL");
         addCheck(r,"Broker Board Learning", "broker_board_learning",true,CYAN);
+        addCheck(r,"Shadow Testing (record only)","shadow_testing_mode",false,Color.rgb(125,211,252));
         addCheck(r,"Quick High-Confidence Decision", "quick_decision",true,Color.rgb(167,243,208));
         addSeek(r,"Quick signal threshold","quick_decision_threshold",85,90,85,"%");
         addCheck(r,"Automatic Pattern BUY / SELL", "auto_pattern_signals",false,Color.rgb(250,204,21));
@@ -223,6 +227,12 @@ public class MainActivity extends Activity {
         reset.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("Reset learning?")
                 .setMessage("This clears calibration for the detected asset only.").setNegativeButton("Cancel",null)
                 .setPositiveButton("Reset",(d,w)->{learner.setAsset(currentDetectedAsset());learner.resetCurrentAsset();new TrainingStore(this).clearPending();updateLearning();updateDashboard();}).show()); r.addView(reset);
+        Button patterns=cyberButton("PATTERN PERFORMANCE DASHBOARD",BLUE);
+        patterns.setOnClickListener(v->showPatternDashboard());r.addView(patterns);
+        Button diagnostics=cyberButton("SCANNER DIAGNOSTICS",BLUE);
+        diagnostics.setOnClickListener(v->showDiagnostics());r.addView(diagnostics);
+        Button export=cyberButton("EXPORT LEARNING DATA",CYAN);
+        export.setOnClickListener(v->exportLearningData());r.addView(export);
         section(r,"TRAINING INFORMATION");
         note(r,"Training stays automatic. AZ learns only from completed, exact-close outcomes and keeps local calibration active.");
         note(r,"Shared learning sync validates anonymous numeric outcomes. No screenshots, credentials or Android identifiers are uploaded.");
@@ -232,7 +242,7 @@ public class MainActivity extends Activity {
 
     LinearLayout buildUpdate(){
         LinearLayout r=column(); section(r,"AZ APP UPDATE");
-        TextView current=tx("CURRENT VERSION  16.25",18,CYAN); current.setTypeface(null,Typeface.BOLD);
+        TextView current=tx("CURRENT VERSION  16.26",18,CYAN); current.setTypeface(null,Typeface.BOLD);
         current.setGravity(Gravity.CENTER); current.setPadding(0,dp(25),0,dp(20)); r.addView(current);
         updateManager=new AppUpdateManager(this,status);
         Button update=cyberButton("CHECK / UPDATE APP",CYAN); update.setOnClickListener(v->updateManager.checkForUpdate(true)); r.addView(update);
@@ -290,13 +300,87 @@ public class MainActivity extends Activity {
             else{String fallback=prefs.getString("last_valid_timeframe","M1");if(!fallback.matches("M[1-5]"))fallback="M1";tf=fallback+" AUTO fallback";}}
         autoSymbolText.setText("AUTO_CHART".equals(a)?"Detected chart: AUTO visual mode • "+tf:"Detected chart: "+a+" • "+tf);}
 
-    void updateLearning(){if(learnText==null)return;StringBuilder s=new StringBuilder();int all=learner.totalSamplesAll();TrainingStore store=new TrainingStore(this);
-        s.append("CHART  ").append(currentDetectedAsset()).append("\nRESOLVED  ").append(all).append("\nPENDING  ").append(store.pendingCount())
+    void updateLearning(){
+        if(learnText==null)return;
+        StringBuilder s=new StringBuilder();
+        int all=learner.totalSamplesAll();
+        TrainingStore store=new TrainingStore(this);
+        s.append("CHART  ").append(currentDetectedAsset())
+                .append("\nRESOLVED  ").append(all)
+                .append("\nPENDING  ").append(store.pendingCount())
                 .append("\nSYNC  ").append(CommunityLearningSync.status(this)).append("\n\n");
-        for(int i=0;i<5;i++){int n=learner.totalSamples(i);s.append("M").append(i+1).append("  ").append(n).append(" samples");
-            if(n>0)s.append(" • ").append(learner.accuracyPct(i)).append("% all-time • ").append(learner.recentAccuracyPct(i)).append("% recent");
-            s.append("\n").append(learner.verification(i).summary());\n            if(learner.driftDetected(i))s.append("\nMARKET DRIFT • rollback active (")\n                    .append(learner.rollbackCount(i)).append(")");\n            else if(learner.totalSamples(i)<30)s.append("\nLOCAL LEARNING LOCKED • ")\n                    .append(learner.totalSamples(i)).append("/30");\n            if(i<4)s.append("\n\n");}
-        s.append(all<150?"\n\nCalibration is still building.":"\n\nLearned calibration is active.");learnText.setText(s.toString());}
+        for(int i=0;i<5;i++){
+            int n=learner.totalSamples(i);
+            s.append("M").append(i+1).append("  ").append(n).append(" samples");
+            if(n>0)s.append(" • ").append(learner.accuracyPct(i)).append("% all-time • ")
+                    .append(learner.recentAccuracyPct(i)).append("% recent");
+            s.append("\n").append(learner.verification(i).summary());
+            if(learner.driftDetected(i))s.append("\nMARKET DRIFT • rollback active (")
+                    .append(learner.rollbackCount(i)).append(")");
+            else if(n<30)s.append("\nLOCAL LEARNING LOCKED • ").append(n).append("/30");
+            if(i<4)s.append("\n\n");
+        }
+        s.append(all<150?"\n\nCalibration is still building.":"\n\nLearned calibration is active.");
+        learnText.setText(s.toString());
+    }
+
+    void showPatternDashboard(){
+        learner.setAsset(currentDetectedAsset());
+        StringBuilder s=new StringBuilder("PAIR  ").append(currentDetectedAsset()).append("\n");
+        for(int h=0;h<5;h++)s.append("\nM").append(h+1).append("\n")
+                .append(learner.setupReport(h)).append("\n");
+        new AlertDialog.Builder(this).setTitle("Pattern Performance")
+                .setMessage(s.toString()).setPositiveButton("CLOSE",null).show();
+    }
+
+    void showDiagnostics(){
+        long last=prefs.getLong("last_successful_scan_at",0L);
+        String scan=last<=0?"Never":new SimpleDateFormat("dd MMM yyyy  HH:mm:ss",Locale.getDefault())
+                .format(new Date(last));
+        SharedPreferences community=getSharedPreferences("community_learning_v1",MODE_PRIVATE);
+        String current=community.getString("model_version","Not downloaded");
+        String previous=community.getString("previous_model_version","None");
+        String quarantined=community.getString("quarantined_model_version","None");
+        String text="Scanner: "+(scannerActive()?"ACTIVE":"STOPPED")+
+                "\nPair: "+currentDetectedAsset()+
+                "\nTimeframe: "+prefs.getString("detected_timeframe",prefs.getString("last_valid_timeframe","M1"))+
+                "\nLast successful scan: "+scan+
+                "\nNotifications: "+notificationStatus()+
+                "\nSync: "+CommunityLearningSync.status(this)+
+                "\n\nMODEL HISTORY"+
+                "\nCurrent: "+current+
+                "\nPrevious: "+previous+
+                "\nQuarantined: "+quarantined;
+        new AlertDialog.Builder(this).setTitle("Scanner Diagnostics")
+                .setMessage(text).setPositiveButton("CLOSE",null).show();
+    }
+
+    void exportLearningData(){
+        TrainingStore store=new TrainingStore(this);
+        if(!store.csvFile().exists()){
+            Toast.makeText(this,"No resolved learning data is available yet.",Toast.LENGTH_LONG).show();
+            return;
+        }
+        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("text/csv");
+        i.putExtra(Intent.EXTRA_TITLE,"AZ_learning_data.csv");
+        startActivityForResult(i,EXPORT_TRAINING_REQUEST);
+    }
+
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
+        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode!=EXPORT_TRAINING_REQUEST||resultCode!=RESULT_OK||data==null||data.getData()==null)return;
+        try(FileInputStream in=new FileInputStream(new TrainingStore(this).csvFile());
+            OutputStream out=getContentResolver().openOutputStream(data.getData())){
+            if(out==null)throw new Exception("Android did not open the selected file");
+            byte[] buffer=new byte[8192];int count;
+            while((count=in.read(buffer))!=-1)out.write(buffer,0,count);
+            Toast.makeText(this,"Learning data exported.",Toast.LENGTH_LONG).show();
+        }catch(Exception e){
+            Toast.makeText(this,"Export failed: "+e.getMessage(),Toast.LENGTH_LONG).show();
+        }
+    }
 
     void startScan(){if(Build.VERSION.SDK_INT<30){status.setText("Android 11 or newer is required.");return;}
         if(!AutoSymbolAccessibilityService.isConnected()){pendingAccessibilityStart=true;status.setText("Enable BUY SELL Signal Notifier in Accessibility.");startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));return;}
