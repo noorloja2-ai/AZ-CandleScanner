@@ -299,6 +299,25 @@ public class OnlineLearner {
         return best;
     }
 
+    /** Compact per-pattern dashboard for the selected pair and timeframe. */
+    public synchronized String setupReport(int horizon){
+        String keys=p.getString(k("setup_keys",horizon),"");
+        if(keys.isEmpty())return "No resolved pattern samples yet.";
+        StringBuilder out=new StringBuilder();
+        for(String slug:keys.split("\\|")){
+            if(slug.isEmpty())continue;
+            String prefix=k("setup_"+slug,horizon);
+            int n=p.getInt(prefix+"_n",0),w=p.getInt(prefix+"_w",0);
+            String label=p.getString(prefix+"_label",slug.replace('_',' '));
+            int rate=n==0?0:Math.round(100f*w/n);
+            String state=n<30?"LEARNING":(rate<55?"QUARANTINED":(rate>=65?"STRONG":"ACTIVE"));
+            if(out.length()>0)out.append('\n');
+            out.append(label).append(" • ").append(rate).append("% • ")
+                    .append(w).append('/').append(n).append(" • ").append(state);
+        }
+        return out.length()==0?"No resolved pattern samples yet.":out.toString();
+    }
+
     private static String setupSlug(String s) {
         if (s == null) return "";
         String x = s.trim().toUpperCase(Locale.US);
