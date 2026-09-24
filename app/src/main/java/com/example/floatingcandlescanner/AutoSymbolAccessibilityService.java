@@ -777,7 +777,6 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(!bannerMonitorEnabled() || r==null)return;
         if(topInfoText==null)createTopInfoBar();
         if(topInfoText==null)return;
-        String market=marketCondition(r);
         String direction="WAIT".equals(r.label)?"NO TRADE":r.label;
         int pct=Math.max(r.buyProbability,r.sellProbability);
         if(quick!=null && quick.highChance){
@@ -786,7 +785,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         }
         if(!prefs.getBoolean("auto_pattern_signals",false)){
             int minimum=prefs.getInt("quick_decision_threshold",82);
-            if("POOR".equals(market) || pct<minimum || "WAIT".equals(r.label))direction="NO TRADE";
+            if(pct<minimum || "WAIT".equals(r.label))direction="NO TRADE";
         }
         String pattern=validatedBannerPattern(r);
         if(pattern.isEmpty() || "MULTI-FACTOR CONFLUENCE".equals(pattern))pattern="NOT DETECTED";
@@ -797,7 +796,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         String trend=marketTrend(lastAnalysis==null?null:lastAnalysis.boardState);
         topInfoText.setText("NEXT CANDLE: "+direction+score+"\n"+
                 "PATTERN: "+pattern+"\n"+
-                "TREND: "+trend+" • MARKET: "+market+"\n"+
+                "TREND: "+trend+"\n"+
                 currentAsset()+" • M"+Math.max(1,horizon)+" • ENTRY "+entry);
         topInfoText.setTextColor("NO TRADE".equals(direction)
                 ?Color.rgb(250,204,21):("BUY".equals(direction)
@@ -805,16 +804,21 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     }
 
     private SignalResult applyAutomaticPatternSignal(SignalResult r){
-        if(r==null || !"WAIT".equals(r.label))return r;
+        if(r==null)return null;
         String pattern=validatedBannerPattern(r);
         String direction=directionFromPattern(pattern);
         if(direction.isEmpty())return r;
 
-        int bp=r.buyProbability;
-        int sp=r.sellProbability;
-        int strength=Math.max(r.strength,Math.max(bp,sp));
-        String explanation="Automatic "+direction+" from confirmed pattern: "+pattern+
-                ". Market condition remains a warning and does not block the signal. "+r.explanation;
+        // Pattern mode is deliberately decisive only for a genuinely strong,
+        // completed and visually confirmed setup. It may override an opposite
+        // base-model label, but never a weak/neutral/unconfirmed pattern.
+        int strength=Math.max(r.strength,Math.max(r.buyProbability,r.sellProbability));
+        if(strength<70)return r;
+        int directional=Math.min(100,strength);
+        int bp="BUY".equals(direction)?directional:100-directional;
+        int sp="SELL".equals(direction)?directional:100-directional;
+        String explanation="Automatic "+direction+" from strong confirmed pattern: "+pattern+
+                ". "+r.explanation;
         return new SignalResult(direction,strength,r.score,bp,sp,r.confidence,
                 r.regime,r.rawBuyProbability,r.setupQuality,r.structure,explanation);
     }
@@ -823,18 +827,26 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(pattern==null)return "";
         String p=pattern.toUpperCase(Locale.US);
         if(p.isEmpty() || p.contains("NOT DETECTED") || p.contains("NOT CONFIRMED")
-                || p.contains("AWAITING CONFIRMATION") || p.contains("DOJI")
+                || p.contains("AWAITING CONFIRMATION")
                 || p.contains("SPINNING TOP") || p.contains("INDECISION"))return "";
-        boolean bullish=p.contains("BULL") || p.contains("MORNING")
-                || p.contains("HAMMER") || p.contains("PIERCING")
+        // Direction table for strong confirmed patterns. Dragonfly and
+        // Gravestone are intentional directional Doji exceptions; plain Doji
+        // remains neutral and cannot produce a trade.
+        boolean dragonfly=p.contains("DRAGONFLY DOJI");
+        boolean gravestone=p.contains("GRAVESTONE DOJI");
+        if(p.contains("DOJI") && !dragonfly && !gravestone)return "";
+        boolean bullish=dragonfly || p.contains("BULL") || p.contains("MORNING")
+                || (p.contains("HAMMER") && !p.contains("HANGING MAN")) || p.contains("PIERCING")
                 || p.contains("WHITE SOLDIER") || p.contains("THREE INSIDE UP")
                 || p.contains("THREE OUTSIDE UP") || p.contains("RISING THREE")
+                || p.contains("TWEEZER BOTTOM") || p.contains("INVERTED HAMMER")
                 || p.contains("LOWER-WICK BUYER") || p.contains("BUY PRESSURE");
-        boolean bearish=p.contains("BEAR") || p.contains("EVENING")
+        boolean bearish=gravestone || p.contains("BEAR") || p.contains("EVENING")
                 || p.contains("SHOOTING STAR") || p.contains("HANGING MAN")
                 || p.contains("DARK CLOUD") || p.contains("BLACK CROW")
                 || p.contains("THREE INSIDE DOWN") || p.contains("THREE OUTSIDE DOWN")
                 || p.contains("FALLING THREE") || p.contains("UPPER-WICK SELLER")
+                || p.contains("TWEEZER TOP")
                 || p.contains("SELL PRESSURE");
         return bullish==bearish?"":(bullish?"BUY":"SELL");
     }
@@ -1284,12 +1296,14 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         boolean bullish=p.contains("BULL") || p.contains("WHITE SOLDIER")
                 || p.contains("MORNING") || p.contains("HAMMER")
                 || p.contains("PIERCING") || p.contains("THREE INSIDE UP")
-                || p.contains("THREE OUTSIDE UP") || p.contains("RISING THREE");
+                || p.contains("THREE OUTSIDE UP") || p.contains("RISING THREE")
+                || p.contains("DRAGONFLY DOJI") || p.contains("TWEEZER BOTTOM");
         boolean bearish=p.contains("BEAR") || p.contains("BLACK CROW")
                 || p.contains("EVENING") || p.contains("SHOOTING STAR")
                 || p.contains("HANGING MAN") || p.contains("DARK CLOUD")
                 || p.contains("THREE INSIDE DOWN") || p.contains("THREE OUTSIDE DOWN")
-                || p.contains("FALLING THREE");
+                || p.contains("FALLING THREE") || p.contains("GRAVESTONE DOJI")
+                || p.contains("TWEEZER TOP");
 
         double newestPressure=.36*state.sequenceBias+.24*state.momentum
                 +.16*state.lastDirection+.24*state.recentTwoDirection;
@@ -1315,7 +1329,8 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 || p.contains("MORNING STAR") || p.contains("EVENING STAR")
                 || p.contains("PIERCING") || p.contains("DARK CLOUD")
                 || p.contains("TWEEZER") || p.contains("THREE INSIDE")
-                || p.contains("THREE OUTSIDE");
+                || p.contains("THREE OUTSIDE") || p.contains("DRAGONFLY DOJI")
+                || p.contains("GRAVESTONE DOJI");
         if(reversal && ((bullish && state.recentTwoDirection<=.14)
                 || (bearish && state.recentTwoDirection>=-.14)))return "AWAITING CONFIRMATION";
         return p;
