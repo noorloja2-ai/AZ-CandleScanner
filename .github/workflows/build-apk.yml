@@ -1,10 +1,19 @@
 name: Build signed Android APK
 permissions:
   contents: write
+
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
+    paths-ignore:
+      - community-model.json
+      - update.json
+
+concurrency:
+  group: build-signed-apk-main
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -46,15 +55,27 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           APK_SHA256=$(sha256sum CandleScanner_v16.27.apk | cut -d' ' -f1)
-          jq --arg sha "$APK_SHA256" '.apkSha256 = $sha' update.json > update.tmp
-          mv update.tmp update.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add update.json
-          git diff --cached --quiet || git commit -m "Publish v16.27 APK checksum [skip ci]"
-          pushed=false
+
           for attempt in 1 2 3; do
-            git pull --rebase origin main && git push && pushed=true && break
+            git fetch origin main
+            git checkout -B manifest-publish origin/main
+            jq --arg sha "$APK_SHA256" '.apkSha256 = $sha' update.json > update.tmp
+            mv update.tmp update.json
+            git add update.json
+
+            if git diff --cached --quiet; then
+              exit 0
+            fi
+
+            git commit -m "Publish v16.27 APK checksum [skip ci]"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+
             sleep 2
           done
-          $pushed
+
+          echo "Failed to publish update manifest after 3 attempts"
+          exit 1
