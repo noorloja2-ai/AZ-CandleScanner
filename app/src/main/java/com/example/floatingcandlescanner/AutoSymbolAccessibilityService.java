@@ -856,7 +856,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         // completed and visually confirmed setup from the newest closed candle.
         // It may override the base model, but never a weak/neutral/stale setup.
         int strength=Math.max(r.strength,Math.max(r.buyProbability,r.sellProbability));
-        if(strength<70)return patternNoTrade(r,"PATTERN BELOW 70 STRENGTH");
+        if(strength<85)return patternNoTrade(r,"PATTERN BELOW HIGH CHANCE (85%)");
         if(state==null)return patternNoTrade(r,"LATEST CANDLE NOT VERIFIED");
 
         // The newest completed candle must confirm the mapped direction. This
@@ -1485,7 +1485,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(pct<70)return;
         OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
 
-        // Every completed-candle BUY/SELL signal at 70%+ gets a visible popup.
+        // Safer Mode can notify from 70%; Pattern Mode is High Chance only (85%+).
         // Sound remains independently controlled by the user's sound threshold.
         int alertThreshold=Math.max(75,Math.min(90,
                 prefs==null?85:prefs.getInt("sound_alert_threshold",85)));
