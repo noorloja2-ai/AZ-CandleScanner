@@ -64,6 +64,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private TextView topInfoText;
     private WindowManager.LayoutParams topInfoLp;
     private boolean infoCardPinned=false;
+    // A BUY/SELL popup belongs to the user once shown. Scanner refreshes may
+    // update the banner behind it, but only the popup CLOSE action may remove it.
+    private boolean signalCardManualCloseOnly=false;
     private OnlineLearner learner;
     private TrainingStore training;
     private PatternModeLearningStore patternLearning;
@@ -804,7 +807,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     }
 
     private void clearStrongSignalCard(){
-        if(infoCardPinned)return;
+        if(infoCardPinned || signalCardManualCloseOnly)return;
         if(signalCard!=null){
             try{wm.removeView(signalCard);}catch(Exception ignored){}
             signalCard=null;
@@ -1142,6 +1145,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
 
     private void showInfoCard(){
         if(wm==null)return;
+        if(signalCardManualCloseOnly && signalCard!=null)return;
         infoCardPinned=true;
         if(signalCard!=null){
             try{wm.removeView(signalCard);}catch(Exception ignored){}
@@ -1186,7 +1190,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
         cp.gravity=Gravity.CENTER_HORIZONTAL|Gravity.TOP; cp.y=dp(150);
-        try{wm.addView(card,cp);signalCard=card;}catch(Exception ignored){}
+        try{wm.addView(card,cp);signalCard=card;signalCardManualCloseOnly=true;}catch(Exception ignored){}
     }
 
     private void refreshInfoCard(long now){
@@ -1223,6 +1227,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private void showQuickSignalCard(QuickDecisionEngine.Result quick,int horizon){
         if(infoCardPinned)return;
         if(quick==null || !quick.highChance || wm==null)return;
+        if(signalCardManualCloseOnly && signalCard!=null)return;
         long slot=System.currentTimeMillis()/(Math.max(1,horizon)*60_000L);
         String key=currentAsset()+"|M"+horizon+"|"+quick.label+"|"+slot;
         if(key.equals(lastQuickPopupKey))return;
@@ -1261,7 +1266,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         card.addView(close,new LinearLayout.LayoutParams(-1,dp(46)));
         close.setOnClickListener(v->{
             try{wm.removeView(card);}catch(Exception ignored){}
-            if(signalCard==card)signalCard=null;
+            if(signalCard==card){signalCard=null;signalCardManualCloseOnly=false;}
             cancelSignalNotification();
         });
 
@@ -1271,7 +1276,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
         cp.gravity=Gravity.CENTER_HORIZONTAL|Gravity.TOP; cp.y=dp(150);
-        try{wm.addView(card,cp);signalCard=card;}catch(Exception ignored){}
+        try{wm.addView(card,cp);signalCard=card;signalCardManualCloseOnly=true;}catch(Exception ignored){}
     }
 
     private String shortSetup(SignalResult r){
@@ -1409,6 +1414,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private void showSignalCard(SignalResult r,int horizon,int c){
         if(infoCardPinned)return;
         if(wm==null)return;
+        if(signalCardManualCloseOnly && signalCard!=null)return;
         if(signalCard!=null){
             try{wm.removeView(signalCard);}catch(Exception ignored){}
             signalCard=null;
@@ -1458,7 +1464,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         });
         close.setOnClickListener(v->{
             try{wm.removeView(card);}catch(Exception ignored){}
-            if(signalCard==card)signalCard=null;
+            if(signalCard==card){signalCard=null;signalCardManualCloseOnly=false;}
             cancelSignalNotification();
         });
 
@@ -1470,7 +1476,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 PixelFormat.TRANSLUCENT);
         lp.gravity=Gravity.CENTER_HORIZONTAL|Gravity.TOP;
         lp.y=dp(170);
-        try{wm.addView(card,lp);signalCard=card;}catch(Exception ignored){}
+        try{wm.addView(card,lp);signalCard=card;signalCardManualCloseOnly=true;}catch(Exception ignored){}
     }
 
     private void maybeNotify(SignalResult r,int horizon){
@@ -1650,6 +1656,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(s.signalCard!=null){
                 try{s.wm.removeView(s.signalCard);}catch(Exception ignored){}
                 s.signalCard=null;
+                s.signalCardManualCloseOnly=false;
             }
             s.cancelSignalNotification();
         });
@@ -1783,7 +1790,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(topInfoBar!=null){try{wm.removeView(topInfoBar);}catch(Exception ignored){}}
             if(statusBox!=null){try{wm.removeView(statusBox);}catch(Exception ignored){}}
         }
-        signalCard=null; infoCardPinned=false; infoDetails=null; statusBox=null; statusText=null; symbolText=null; timingText=null; liveText=null;
+        signalCard=null; signalCardManualCloseOnly=false; infoCardPinned=false; infoDetails=null; statusBox=null; statusText=null; symbolText=null; timingText=null; liveText=null;
         topInfoBar=null; topInfoText=null; topInfoLp=null;
     }
 
