@@ -2,7 +2,7 @@
   "version": "16.22",
   "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.22/CandleScanner_v16.22.apk",
   "apkName": "CandleScanner_v16.22.apk",
-  "notes": "V16.22 locks Pattern Mode signals to the newest completed candle. Live or manual frames cannot issue BUY/SELL, and a contradictory latest candle forces NO TRADE.",
+  "notes": "V16.22 locks Safer Mode and Pattern Mode signals to the newest completed candle. Live or manual frames cannot issue BUY/SELL; AZ waits for candle close, and a contradictory latest candle forces NO TRADE.",
   "build": 90,
   "publishedAt": "2026-09-24T10:25:00Z"
 }
