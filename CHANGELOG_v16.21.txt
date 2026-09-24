@@ -1,0 +1,9 @@
+AZ CandleScanner v16.21
+
+- Removes Market Condition completely from the broker banner, long-press information and app descriptions.
+- Removes the old GOOD/POOR/BEST market-condition calculation and display feature.
+- Pattern Mode shows BUY/SELL only for a completed, strong (70+) and visually confirmed directional pattern.
+- Weak, neutral, conflicting, incomplete and unconfirmed patterns remain NO TRADE.
+- Plain Doji, Spinning Top, High Wave and indecision remain NO TRADE.
+- Safe Mode remains available when Automatic Pattern BUY / SELL is OFF.
+- Keeps v16.20 pattern knowledge, v16.19 pair verification and all existing local/shared learning data.
