@@ -160,13 +160,13 @@ public class MainActivity extends Activity {
         LinearLayout r=column(); section(r,"SIGNAL CONTROL");
         addCheck(r,"Broker Board Learning", "broker_board_learning",true,CYAN);
         addCheck(r,"Quick High-Confidence Decision", "quick_decision",true,Color.rgb(167,243,208));
-        addSeek(r,"Quick signal threshold","quick_decision_threshold",78,90,82,"%");
+        addSeek(r,"Quick signal threshold","quick_decision_threshold",85,90,85,"%");
         addCheck(r,"Automatic Pattern BUY / SELL", "auto_pattern_signals",false,Color.rgb(250,204,21));
-        note(r,"OFF (recommended): patterns require trend, structure and market-quality confirmation. ON: each confirmed directional pattern creates BUY or SELL; market quality is shown only as a warning.");
+        note(r,"Medium Chance is removed. Both modes require at least 85%. OFF: Safer Mode uses confirmation filters. ON: Pattern Mode follows strong confirmed directional patterns.");
         addCheck(r,"High Accuracy Mode", "high_accuracy",true,Color.WHITE);
         addCheck(r,"Elite Precision Mode", "elite_mode",true,Color.rgb(167,243,208));
         addCheck(r,"Sound + vibration alerts", "sound_alerts",true,Color.rgb(253,230,138));
-        addSeek(r,"Sound alert threshold","sound_alert_threshold",75,90,85,"%");
+        addSeek(r,"Sound alert threshold","sound_alert_threshold",85,90,85,"%");
         section(r,"NOTIFICATIONS");
         TextView notificationState=tx(notificationStatus(),13,Color.WHITE);
         notificationState.setPadding(dp(10),dp(10),dp(10),dp(10));
