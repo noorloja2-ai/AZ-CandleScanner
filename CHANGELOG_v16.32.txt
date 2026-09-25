@@ -1,0 +1,7 @@
+AZ CandleScanner v16.32
+
+- Fixes EUR/RUB OTC pair verification by adding RUB and other missing currencies.
+- Expands named OTC recognition for crypto, stocks, commodities and indices used by the broker.
+- Accepts common broker naming variants such as McDonald's/McDonalds, ExxonMobil/Exxon Mobil and D30/EUR/D30EUR.
+- Keeps the same package, signing setup, local learning keys and training history.
+- Does not reset, replace or delete existing self-learning data.

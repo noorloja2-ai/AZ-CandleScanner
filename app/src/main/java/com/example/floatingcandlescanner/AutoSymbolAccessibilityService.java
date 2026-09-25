@@ -36,7 +36,7 @@ import java.util.regex.Pattern;
  * appear only for statistically verified setups. The service never stores screenshots or credentials.
  */
 public class AutoSymbolAccessibilityService extends AccessibilityService {
-    private static final String CCY = "EUR|GBP|USD|JPY|CHF|AUD|NZD|CAD|SGD|HKD|CNH|CNY|INR|BRL|MXN|CLP|COP|PEN|ARS|ZAR|TRY|SEK|NOK|DKK|PLN|HUF|CZK|AED|SAR|JOD|BHD|KWD|QAR|OMR|ILS|THB|IDR|MYR|PHP|VND|KRW|PKR|BDT|EGP|MAD|RON|BGN|ISK";
+    private static final String CCY = "EUR|GBP|USD|JPY|CHF|AUD|NZD|CAD|SGD|HKD|CNH|CNY|INR|BRL|MXN|CLP|COP|PEN|ARS|ZAR|TRY|SEK|NOK|DKK|PLN|HUF|CZK|AED|SAR|JOD|BHD|KWD|QAR|OMR|ILS|THB|IDR|MYR|PHP|VND|KRW|PKR|BDT|EGP|MAD|RON|BGN|ISK|RUB|UAH|KZT|UZS|GEL|AMD|AZN|LKR|NPR|NGN|KES|GHS";
     private static final String ASSET = CCY + "|XAU|XAG|BTC|ETH|SOL|BNB";
     private static final Pattern PAIR = Pattern.compile("(?i)(?<![A-Z0-9])(" + ASSET + ")\\s*[/\\-_:]?\\s*(" + ASSET + "|USDT)(?![A-Z0-9])");
     // Quotex exposes many OTC crypto selectors as a full instrument name rather
@@ -44,8 +44,18 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     // explicit so unrelated overlay/status text ending in OTC cannot be accepted
     // as a verified broker instrument.
     private static final String NAMED_OTC_ASSET =
+            // Cryptocurrencies exposed by name rather than BASE/QUOTE.
             "CARDANO|BITCOIN|ETHEREUM|LITECOIN|RIPPLE|DOGECOIN|SOLANA|POLKADOT|"+
-            "AVALANCHE|CHAINLINK|POLYGON|TRON|BINANCE COIN";
+            "AVALANCHE|CHAINLINK|POLYGON|TRON|TONCOIN|BINANCE COIN|BITCOIN CASH|"+
+            // Stocks.
+            "APPLE|CISCO|INTEL|MCDONALD(?:'S|S)?|MICROSOFT|PFIZER(?: INC)?|"+
+            "EXXONMOBIL|EXXON MOBIL|AMAZON|ALIBABA|CITIGROUP(?: INC)?|META|"+
+            "TESLA|NVIDIA|GOOGLE|ALPHABET|NETFLIX|COCA[- ]?COLA|"+
+            // Commodities.
+            "BRENT OIL|WTI CRUDE OIL|SILVER|GOLD|NATURAL GAS|PALLADIUM(?: SPOT)?|"+
+            "PLATINUM(?: SPOT)?|"+
+            // Indices. Slash variants are normalized before matching.
+            "AUS ?200|100GBP|CAC ?40|D30/?EUR|D30EUR|DJI30|E35EUR|E50/?EUR";
     private static final Pattern NAMED_OTC = Pattern.compile(
             "(?i)(?<![A-Z0-9])(" + NAMED_OTC_ASSET + ")\\s+OTC(?![A-Z0-9])");
     private static final Pattern TF_M = Pattern.compile("(?i)(?<![A-Z0-9])M\\s*([1-5])(?!\\d)");
