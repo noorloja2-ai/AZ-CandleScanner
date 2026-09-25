@@ -858,14 +858,22 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         }
         String pattern=validatedBannerPattern(r);
         if(pattern.isEmpty() || "MULTI-FACTOR CONFLUENCE".equals(pattern))pattern="NOT DETECTED";
+        boolean recentPattern=pattern.startsWith("RECENT ");
+        if(recentPattern)pattern=pattern.substring("RECENT ".length()).trim();
         long entryAt=predictionTargetStartMs>System.currentTimeMillis()
                 ?predictionTargetStartMs:nextBoundary(System.currentTimeMillis(),Math.max(1,horizon));
         String entry=new SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(new Date(entryAt));
         String score="NO TRADE".equals(direction)?"":" • "+pct+"%";
         String trend=marketTrend(lastAnalysis==null?null:lastAnalysis.boardState);
+        String trendReason="";
+        if("NO TRADE".equals(direction) && trend.contains("EXTENDED"))
+            trendReason=" • WAIT FOR PULLBACK";
+        else if("NO TRADE".equals(direction) && quick!=null
+                && quick.reason!=null && quick.reason.startsWith("NO TRADE:"))
+            trendReason=" • "+quick.reason.substring("NO TRADE:".length()).trim();
         topInfoText.setText("NEXT CANDLE: "+direction+score+"\n"+
-                "PATTERN: "+pattern+"\n"+
-                "TREND: "+trend+"\n"+
+                (recentPattern?"RECENT PATTERN: ":"PATTERN: ")+pattern+"\n"+
+                "TREND: "+trend+trendReason+"\n"+
                 currentAsset()+" • M"+Math.max(1,horizon)+" • ENTRY "+entry);
         topInfoText.setTextColor("NO TRADE".equals(direction)
                 ?Color.rgb(250,204,21):("BUY".equals(direction)
@@ -915,7 +923,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private String directionFromPattern(String pattern){
         if(pattern==null)return "";
         String p=pattern.toUpperCase(Locale.US);
-        if(p.isEmpty() || p.contains("NOT DETECTED") || p.contains("NOT CONFIRMED")
+        if(p.isEmpty() || p.startsWith("RECENT ") || p.contains("NOT DETECTED") || p.contains("NOT CONFIRMED")
                 || p.contains("AWAITING CONFIRMATION")
                 || p.contains("SPINNING TOP") || p.contains("INDECISION"))return "";
         // Direction table for strong confirmed patterns. Dragonfly and
@@ -1350,7 +1358,10 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         boolean newestBullish=state.recentTwoDirection>.20 || state.lastDirection>.38;
         boolean conflicts=(bullish && (newestPressure<-.10 || newestBearish))
                 || (bearish && (newestPressure>.10 || newestBullish));
-        if(conflicts)return "NOT CONFIRMED";
+        // Keep useful context visible without presenting an older setup as the
+        // latest completed-candle pattern. RECENT patterns are display-only and
+        // directionFromPattern deliberately prevents them from creating trades.
+        if(conflicts)return "RECENT "+p;
 
         // Multi-candle names need meaningful agreement from the newest sequence;
         // a single wide coloured candle must not masquerade as three candles.
