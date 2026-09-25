@@ -1,0 +1,7 @@
+AZ CandleScanner v16.30
+
+- The banner now labels an older conflicting setup as RECENT PATTERN instead of presenting it as the latest completed-candle pattern.
+- RECENT PATTERN is display-only and cannot trigger an automatic BUY or SELL.
+- NO TRADE on an extended move now explains WAIT FOR PULLBACK directly in the banner.
+- MEDIUM CHANCE remains available in Safer Mode and Pattern Mode.
+- Completed-candle confirmation, safety filters, licence compatibility, local training, and previous learning data are preserved.
