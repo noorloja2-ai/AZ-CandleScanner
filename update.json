@@ -1,9 +1,9 @@
 {
-  "version": "16.31",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.31/CandleScanner_v16.31.apk",
-  "apkName": "CandleScanner_v16.31.apk",
-  "apkSha256": "0951185eed1ccc7a26a1b09ebc263eb1055a10f20c66fb2f37b06beca36e700f",
-  "notes": "Performance accounting now records only actionable BUY/SELL signals. New outcomes are separated by OTC/LIVE market and SAFER/PATTERN/SHADOW mode. Existing learning data is preserved.",
-  "build": 99,
-  "publishedAt": "2026-09-25T19:55:01Z"
+  "version": "16.32",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.32/CandleScanner_v16.32.apk",
+  "apkName": "CandleScanner_v16.32.apk",
+  "apkSha256": "453cf038957111a9b9ae22659670cc2a1d459d81dcc6b0c267b8697ec08cb80a",
+  "notes": "Expanded broker asset recognition fixes EUR/RUB OTC and adds more currencies, crypto, stocks, commodities and indices. Existing learning data is preserved.",
+  "build": 100,
+  "publishedAt": "2026-09-25T20:16:48Z"
 }
