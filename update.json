@@ -1,9 +1,9 @@
 {
-  "version": "16.27",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.27/CandleScanner_v16.27.apk",
-  "apkName": "CandleScanner_v16.27.apk",
-  "apkSha256": "cf68c73a3ded132de2acbc89f16ee2fa68c49f70b0c47f9f554896cd2ea64293",
-  "notes": "Pair recognition fix: USD/CLP OTC and additional Latin American currency pairs are now verified correctly. Signal-safety filters are unchanged.",
-  "build": 95,
-  "publishedAt": "2026-09-24T23:45:00Z"
+  "version": "16.28",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.28/CandleScanner_v16.28.apk",
+  "apkName": "CandleScanner_v16.28.apk",
+  "apkSha256": "",
+  "notes": "Named OTC assets such as Cardano OTC are now verified correctly. Stale pair identity and pending learning are cleared whenever the current pair cannot be verified.",
+  "build": 96,
+  "publishedAt": "2026-09-25T09:00:00Z"
 }

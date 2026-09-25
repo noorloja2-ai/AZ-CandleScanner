@@ -39,6 +39,15 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private static final String CCY = "EUR|GBP|USD|JPY|CHF|AUD|NZD|CAD|SGD|HKD|CNH|CNY|INR|BRL|MXN|CLP|COP|PEN|ARS|ZAR|TRY|SEK|NOK|DKK|PLN|HUF|CZK|AED|SAR|JOD|BHD|KWD|QAR|OMR|ILS|THB|IDR|MYR|PHP|VND|KRW|PKR|BDT|EGP|MAD|RON|BGN|ISK";
     private static final String ASSET = CCY + "|XAU|XAG|BTC|ETH|SOL|BNB";
     private static final Pattern PAIR = Pattern.compile("(?i)(?<![A-Z0-9])(" + ASSET + ")\\s*[/\\-_:]?\\s*(" + ASSET + "|USDT)(?![A-Z0-9])");
+    // Quotex exposes many OTC crypto selectors as a full instrument name rather
+    // than a BASE/QUOTE pair (for example, "Cardano OTC"). Keep this list
+    // explicit so unrelated overlay/status text ending in OTC cannot be accepted
+    // as a verified broker instrument.
+    private static final String NAMED_OTC_ASSET =
+            "CARDANO|BITCOIN|ETHEREUM|LITECOIN|RIPPLE|DOGECOIN|SOLANA|POLKADOT|"+
+            "AVALANCHE|CHAINLINK|POLYGON|TRON|BINANCE COIN";
+    private static final Pattern NAMED_OTC = Pattern.compile(
+            "(?i)(?<![A-Z0-9])(" + NAMED_OTC_ASSET + ")\\s+OTC(?![A-Z0-9])");
     private static final Pattern TF_M = Pattern.compile("(?i)(?<![A-Z0-9])M\\s*([1-5])(?!\\d)");
     private static final Pattern TF_MIN = Pattern.compile("(?i)(?<!\\d)([1-5])\\s*(?:M|MIN|MINS|MINUTE|MINUTES)(?![A-Z])");
 
@@ -1389,8 +1398,19 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             }
             if(timeframe!=null&&!timeframe.isEmpty())edit.putString("detected_timeframe",timeframe)
                     .putString("last_valid_timeframe",timeframe).putLong("detected_timeframe_time",now);
+            boolean verified=symbol!=null&&!symbol.isEmpty();
+            if(!verified){
+                // Never keep presenting or learning against a previously seen
+                // pair when the current broker screen cannot verify its symbol.
+                edit.remove("detected_asset").remove("detected_asset_time");
+                if(training!=null)training.clearPending();
+                if(boardLearner!=null)boardLearner.clearPending();
+                if(selfDecision!=null)selfDecision.reset();
+                if(quickDecision!=null)quickDecision.reset();
+                lastAlertKey="";
+            }
             edit.apply();
-            return symbol!=null&&!symbol.isEmpty();
+            return verified;
         }catch(Exception ignored){}finally{
             if(root!=null)try{root.recycle();}catch(Exception ignored){}
         }
@@ -1406,19 +1426,19 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             if(quickDecision!=null)quickDecision.reset();
             lastQuickPopupKey="";
             if(statusText!=null){
-                statusText.setText("PAIR NOT VERIFIED — NO TRADE");
+                statusText.setText("PAIR DETECTION ERROR — RESCAN REQUIRED");
                 statusText.setTextColor(Color.rgb(251,191,36));
             }
             if(liveText!=null){
-                liveText.setText("AI LIVE • PAIR NOT VERIFIED");
+                liveText.setText("AI LIVE • PAIR DETECTION ERROR");
                 liveText.setTextColor(Color.rgb(251,191,36));
             }
             if(bannerMonitorEnabled()){
                 if(topInfoText==null)createTopInfoBar();
                 if(topInfoText!=null){
                     topInfoText.setText("NEXT CANDLE: NO TRADE\n"+
-                            "PAIR NOT VERIFIED\n"+
-                            "Open the broker chart and keep the pair name visible");
+                            "PAIR MISMATCH — RESCAN REQUIRED\n"+
+                            "Keep the current broker pair name visible");
                     topInfoText.setTextColor(Color.rgb(250,204,21));
                 }
             }
@@ -1831,6 +1851,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(text==null)return null;
         String u=text.toUpperCase(Locale.US).replace('\u00A0',' ')
                 .replace("／","/").replace("–","-").replace("—","-");
+        Matcher named=NAMED_OTC.matcher(u);
+        if(named.find())return named.group(1).toUpperCase(Locale.US)+" OTC";
+
         Matcher m=PAIR.matcher(u);
         String best=null; int bestScore=Integer.MIN_VALUE;
         while(m.find()){

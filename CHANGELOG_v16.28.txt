@@ -1,0 +1,7 @@
+CandleScanner v16.28 - Named OTC Pair Detection Fix
+
+- Added direct recognition for Cardano OTC and other named OTC crypto instruments.
+- Removed the stale-pair fallback that could display BTC/GBP after the broker changed assets.
+- Clears unresolved pending learning whenever the current broker pair cannot be verified.
+- Shows PAIR MISMATCH — RESCAN REQUIRED instead of treating a detection error as a market NO TRADE.
+- Preserved all validated local and community learning history.
