@@ -1,7 +1,13 @@
 {
   "schema": 2,
   "version": "gateway-2026-09-25",
-  "generated_at": "2026-09-25T10:35:38.510Z",
-  "max_weight": 0.2,
+  "generated_at": "2026-09-25T10:36:38.890Z",
+  "minimum_app_version": "16.28",
+  "qualification": {
+    "min_samples": 200,
+    "min_win_rate": 0.6,
+    "min_lower_95": 0.5208333333333334
+  },
+  "max_weight": 0.05,
   "assets": {}
 }
