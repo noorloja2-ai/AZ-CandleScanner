@@ -1,0 +1,8 @@
+AZ CandleScanner v16.29
+
+- Restores MEDIUM CHANCE for Safer Mode and Pattern Mode.
+- 70-84%: MEDIUM CHANCE.
+- 85-89%: HIGH CHANCE.
+- 90-100%: VERY HIGH CONFIDENCE.
+- Keeps completed-candle timing, pattern confirmation, market safety filters, local self-learning, shared learning, and existing training history unchanged.
+- Allows Quick and sound alert thresholds to be selected from 70% to 90%.
