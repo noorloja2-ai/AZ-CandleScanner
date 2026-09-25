@@ -2,7 +2,7 @@
   "version": "16.28",
   "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.28/CandleScanner_v16.28.apk",
   "apkName": "CandleScanner_v16.28.apk",
-  "apkSha256": "",
+  "apkSha256": "53ea8ec604fa9f49ced9c785a4fe708cee1f5dd466824e46642538224dc79322",
   "notes": "Named OTC assets such as Cardano OTC are now verified correctly. Stale pair identity and pending learning are cleared whenever the current pair cannot be verified.",
   "build": 96,
   "publishedAt": "2026-09-25T09:00:00Z"
