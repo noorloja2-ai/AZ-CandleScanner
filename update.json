@@ -2,7 +2,7 @@
   "version": "16.29",
   "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.29/CandleScanner_v16.29.apk",
   "apkName": "CandleScanner_v16.29.apk",
-  "apkSha256": "pending-build",
+  "apkSha256": "fa647b8bcbb646d2ba8bfa8531d28b9448cbc52f873b94711c44dadf6d07cc8f",
   "notes": "MEDIUM CHANCE (70-84%) is restored for Safer Mode and Pattern Mode while preserving completed-candle confirmation, safety filters, and all learning data.",
   "build": 97,
   "publishedAt": "2026-09-25T12:55:00Z"
