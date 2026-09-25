@@ -1,0 +1,10 @@
+AZ CandleScanner v16.31
+
+- Corrected performance accounting so internal WAIT forecasts are never counted
+  as wins or losses.
+- New resolved signal records explicitly identify OTC versus LIVE markets.
+- New resolved signal records identify SAFER, PATTERN, or SHADOW mode.
+- Existing v2/v3 learning files remain readable and are not deleted or reset.
+- New records use training_samples_v4.csv with the expanded audit fields.
+- Exact-close resolution, flat-move rejection, model rollback, community-model
+  validation, and isolated Pattern Mode learning remain enabled.

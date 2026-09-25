@@ -1830,7 +1830,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                     displayed.buyProbability,displayed.sellProbability,
                     displayed.confidence,base.regime,base.rawBuyProbability,
                     displayed.setupQuality,displayed.structure,displayed.explanation);
-            training.addPrediction(boundary,asset,selectedH,minutes,now.latestY,sample);
+            String learningMode=prefs.getBoolean("shadow_testing_mode",false)
+                    ?"SHADOW":(prefs.getBoolean("auto_pattern_signals",false)?"PATTERN":"SAFER");
+            training.addPrediction(boundary,asset,selectedH,minutes,now.latestY,sample,learningMode);
         }
     }
 

@@ -68,6 +68,9 @@ public final class CommunityLearningSync {
                 e.put("id", UUID.randomUUID().toString());
                 e.put("schema", 1);
                 e.put("asset", safeAsset(p.asset));
+                e.put("market_profile", p.marketProfile == null
+                        ? TrainingStore.marketProfile(p.asset) : p.marketProfile);
+                e.put("mode", p.mode == null ? "SAFER" : p.mode);
                 e.put("timeframe_minutes", p.timeframeMinutes);
                 e.put("horizon_index", p.horizon);
                 e.put("raw_buy_probability", round6(p.rawBuyP));

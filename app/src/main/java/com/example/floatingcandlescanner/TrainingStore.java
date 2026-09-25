@@ -40,6 +40,8 @@ public class TrainingStore {
         public double rawBuyP;
         public double displayedBuyP;
         public String asset;
+        public String marketProfile;
+        public String mode;
         public String regime;
         public String setup;
 
@@ -53,6 +55,8 @@ public class TrainingStore {
             o.put("p", rawBuyP);
             o.put("q", displayedBuyP);
             o.put("a", asset);
+            o.put("k", marketProfile);
+            o.put("o", mode);
             o.put("r", regime);
             o.put("s", setup);
             return o;
@@ -68,6 +72,8 @@ public class TrainingStore {
             x.rawBuyP = o.optDouble("p", 0.5);
             x.displayedBuyP = o.optDouble("q", x.rawBuyP);
             x.asset = o.optString("a", "AUTO_CHART");
+            x.marketProfile = o.optString("k", marketProfile(x.asset));
+            x.mode = o.optString("o", "SAFER");
             x.regime = o.optString("r", "");
             x.setup = o.optString("s", "");
             return x;
@@ -106,8 +112,13 @@ public class TrainingStore {
     /** Add exactly one prediction for the currently active chart timeframe. */
     public synchronized void addPrediction(long boundary, String asset,
                                            int horizonIndex, int timeframeMinutes,
-                                           double entryY, SignalResult result) {
+                                           double entryY, SignalResult result,
+                                           String mode) {
         if (result == null || boundary <= 0L || timeframeMinutes <= 0) return;
+        // Dashboard and calibration statistics represent signals that a user
+        // could actually act on. Internal WAIT forecasts must not be counted as
+        // wins/losses or uploaded as validated signal outcomes.
+        if (!("BUY".equals(result.label) || "SELL".equals(result.label))) return;
         List<Pending> list = load();
 
         // Avoid duplicate rows when Android retries the same close screenshot.
@@ -127,6 +138,8 @@ public class TrainingStore {
         p.rawBuyP = result.rawBuyProbability;
         p.displayedBuyP = result.buyProbability / 100.0;
         p.asset = safeAsset(asset);
+        p.marketProfile = marketProfile(p.asset);
+        p.mode = safeMode(mode);
         p.regime = result.regime == null ? "" : result.regime;
         p.setup = setupName(result.structure);
         list.add(p);
@@ -147,16 +160,17 @@ public class TrainingStore {
         try {
             File dir = new File(context.getFilesDir(), "training");
             if (!dir.exists()) dir.mkdirs();
-            File csv = new File(dir, "training_samples_v3.csv");
+            File csv = new File(dir, "training_samples_v4.csv");
             boolean fresh = !csv.exists();
             FileWriter w = new FileWriter(csv, true);
             if (fresh) {
-                w.write("created_at,due_at,asset,timeframe_minutes,horizon_index,entry_y,exit_y,raw_buy_probability,displayed_buy_probability,predicted,outcome,correct,setup,regime\n");
+                w.write("created_at,due_at,asset,market_profile,mode,timeframe_minutes,horizon_index,entry_y,exit_y,raw_buy_probability,displayed_buy_probability,predicted,outcome,correct,setup,regime\n");
             }
             String predicted = p.displayedBuyP >= 0.5 ? "BUY" : "SELL";
             w.write(String.format(Locale.US,
-                    "%d,%d,%s,%d,%d,%.6f,%.6f,%.6f,%.6f,%s,%s,%s,%s,%s\n",
-                    p.createdAt, p.dueAt, csvSafe(p.asset), p.timeframeMinutes,
+                    "%d,%d,%s,%s,%s,%d,%d,%.6f,%.6f,%.6f,%.6f,%s,%s,%s,%s,%s\n",
+                    p.createdAt, p.dueAt, csvSafe(p.asset), csvSafe(p.marketProfile),
+                    csvSafe(p.mode), p.timeframeMinutes,
                     p.horizon, p.entryY, exitY, p.rawBuyP, p.displayedBuyP,
                     predicted, outcomeUp ? "UP" : "DOWN", correct ? "1" : "0",
                     csvSafe(p.setup), csvSafe(p.regime)));
@@ -172,7 +186,8 @@ public class TrainingStore {
     public synchronized int resolvedRowCount() {
         File dir = new File(context.getFilesDir(), "training");
         return countRows(new File(dir,"training_samples_v2.csv")) +
-                countRows(new File(dir,"training_samples_v3.csv"));
+                countRows(new File(dir,"training_samples_v3.csv")) +
+                countRows(new File(dir,"training_samples_v4.csv"));
     }
 
     /** Results resolved during the current calendar month on this device. */
@@ -200,6 +215,7 @@ public class TrainingStore {
         File dir = new File(context.getFilesDir(), "training");
         addMonthRows(new File(dir, "training_samples_v2.csv"), from, out);
         addMonthRows(new File(dir, "training_samples_v3.csv"), from, out);
+        addMonthRows(new File(dir, "training_samples_v4.csv"), from, out);
         return out;
     }
 
@@ -263,6 +279,18 @@ public class TrainingStore {
     private static String safeAsset(String s) {
         if (s == null || s.trim().isEmpty()) return "AUTO_CHART";
         return s.trim().toUpperCase(Locale.US);
+    }
+
+    public static String marketProfile(String asset) {
+        String value = safeAsset(asset);
+        return value.contains("OTC") ? "OTC" : "LIVE";
+    }
+
+    private static String safeMode(String mode) {
+        if (mode == null) return "SAFER";
+        String value = mode.trim().toUpperCase(Locale.US);
+        return "PATTERN".equals(value) ? "PATTERN" :
+                ("SHADOW".equals(value) ? "SHADOW" : "SAFER");
     }
 
     private static String csvSafe(String s) {
