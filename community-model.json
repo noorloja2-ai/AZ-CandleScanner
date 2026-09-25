@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "version": "gateway-2026-09-25",
-  "generated_at": "2026-09-25T19:46:11.557Z",
+  "generated_at": "2026-09-25T19:47:11.738Z",
   "minimum_app_version": "16.29",
   "qualification": {
     "min_samples": 200,
