@@ -1,21 +1,3 @@
-CREATE TABLE IF NOT EXISTS seen_events (
-  id TEXT PRIMARY KEY,
-  received_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS aggregates (
-  asset TEXT NOT NULL,
-  timeframe_minutes INTEGER NOT NULL,
-  samples INTEGER NOT NULL DEFAULT 0,
-  correct INTEGER NOT NULL DEFAULT 0,
-  outcome_up INTEGER NOT NULL DEFAULT 0,
-  raw_probability_sum REAL NOT NULL DEFAULT 0,
-  PRIMARY KEY (asset, timeframe_minutes)
-);
-
--- v16.28+ learning is isolated by the producing app version. The original
--- aggregates table remains an immutable-compatible legacy store and is never
--- used to publish a new community model.
 CREATE TABLE IF NOT EXISTS versioned_aggregates (
   asset TEXT NOT NULL,
   timeframe_minutes INTEGER NOT NULL,
@@ -39,5 +21,10 @@ CREATE TABLE IF NOT EXISTS learning_quarantine (
   PRIMARY KEY (asset, timeframe_minutes, source_table)
 );
 
-CREATE INDEX IF NOT EXISTS seen_events_received_at
-ON seen_events(received_at);
+INSERT OR REPLACE INTO learning_quarantine(
+  asset,timeframe_minutes,source_table,reason,quarantined_at)
+VALUES(
+  'BTC_GBP',1,'aggregates',
+  'Pre-v16.28 pair identity could be stale; retained for audit and excluded from models',
+  CAST(strftime('%s','now') AS INTEGER) * 1000
+);

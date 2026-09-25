@@ -1,14 +1,16 @@
 const MAX_BODY_BYTES = 256_000;
 const MAX_EVENTS = 200;
-const MIN_MODEL_SAMPLES = 50;
+const MIN_MODEL_SAMPLES = 200;
 const MIN_MODEL_WIN_RATE = 0.60;
 const BREAK_EVEN_92 = 1 / 1.92;
+const VERSIONED_LEARNING_MIN = "16.28";
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
-      return json({ ok: true, service: "az-learning-gateway", schema: 1 });
+      return json({ ok: true, service: "az-learning-gateway", schema: 2,
+        versioned_learning_min: VERSIONED_LEARNING_MIN });
     }
     if (request.method === "GET" && url.pathname === "/license-admin") {
       return new Response(adminPage(), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
@@ -179,6 +181,7 @@ async function copyKey(){try{await navigator.clipboard.writeText(lastKey);msgEl.
 }
 
 async function acceptBatch(request, env) {
+  await ensureLearningSchema(env);
   const type = request.headers.get("content-type") || "";
   if (!type.toLowerCase().includes("application/json"))
     return json({ error: "json_required" }, 415);
@@ -201,29 +204,72 @@ async function acceptBatch(request, env) {
 
   let accepted = 0, duplicates = 0, rejected = 0;
   for (const raw of payload.events) {
-    const event = validateEvent(raw);
+    const event = validateEvent(raw, payload.app_version);
     if (!event) { rejected++; continue; }
     const inserted = await env.AZ_LEARNING_DB.prepare(
       "INSERT OR IGNORE INTO seen_events(id,received_at) VALUES(?,?)"
     ).bind(event.id, Date.now()).run();
     if (!inserted.meta?.changes) { duplicates++; continue; }
 
-    await env.AZ_LEARNING_DB.prepare(`
-      INSERT INTO aggregates(asset,timeframe_minutes,samples,correct,outcome_up,raw_probability_sum)
-      VALUES(?,?,1,?,?,?)
-      ON CONFLICT(asset,timeframe_minutes) DO UPDATE SET
-        samples=samples+1,
-        correct=correct+excluded.correct,
-        outcome_up=outcome_up+excluded.outcome_up,
-        raw_probability_sum=raw_probability_sum+excluded.raw_probability_sum
-    `).bind(event.asset, event.timeframe, event.correct ? 1 : 0,
-      event.outcomeUp ? 1 : 0, event.rawP).run();
+    if (versionAtLeast(event.appVersion, VERSIONED_LEARNING_MIN)) {
+      await env.AZ_LEARNING_DB.prepare(`
+        INSERT INTO versioned_aggregates(
+          asset,timeframe_minutes,app_version,samples,correct,outcome_up,raw_probability_sum)
+        VALUES(?,?,?,1,?,?,?)
+        ON CONFLICT(asset,timeframe_minutes,app_version) DO UPDATE SET
+          samples=samples+1,
+          correct=correct+excluded.correct,
+          outcome_up=outcome_up+excluded.outcome_up,
+          raw_probability_sum=raw_probability_sum+excluded.raw_probability_sum
+      `).bind(event.asset, event.timeframe, event.appVersion,
+        event.correct ? 1 : 0, event.outcomeUp ? 1 : 0, event.rawP).run();
+    } else {
+      // Preserve older submissions for audit/history, but never allow them to
+      // train a model after the v16.28 pair-identity correction.
+      await env.AZ_LEARNING_DB.prepare(`
+        INSERT INTO aggregates(asset,timeframe_minutes,samples,correct,outcome_up,raw_probability_sum)
+        VALUES(?,?,1,?,?,?)
+        ON CONFLICT(asset,timeframe_minutes) DO UPDATE SET
+          samples=samples+1,
+          correct=correct+excluded.correct,
+          outcome_up=outcome_up+excluded.outcome_up,
+          raw_probability_sum=raw_probability_sum+excluded.raw_probability_sum
+      `).bind(event.asset, event.timeframe, event.correct ? 1 : 0,
+        event.outcomeUp ? 1 : 0, event.rawP).run();
+    }
     accepted++;
   }
   return json({ ok: true, accepted, duplicates, rejected });
 }
 
-function validateEvent(e) {
+async function ensureLearningSchema(env) {
+  await env.AZ_LEARNING_DB.batch([
+    env.AZ_LEARNING_DB.prepare(`
+      CREATE TABLE IF NOT EXISTS versioned_aggregates (
+        asset TEXT NOT NULL, timeframe_minutes INTEGER NOT NULL,
+        app_version TEXT NOT NULL, samples INTEGER NOT NULL DEFAULT 0,
+        correct INTEGER NOT NULL DEFAULT 0, outcome_up INTEGER NOT NULL DEFAULT 0,
+        raw_probability_sum REAL NOT NULL DEFAULT 0,
+        PRIMARY KEY (asset, timeframe_minutes, app_version))`),
+    env.AZ_LEARNING_DB.prepare(`
+      CREATE INDEX IF NOT EXISTS versioned_aggregates_asset_timeframe
+      ON versioned_aggregates(asset, timeframe_minutes)`),
+    env.AZ_LEARNING_DB.prepare(`
+      CREATE TABLE IF NOT EXISTS learning_quarantine (
+        asset TEXT NOT NULL, timeframe_minutes INTEGER NOT NULL,
+        source_table TEXT NOT NULL, reason TEXT NOT NULL,
+        quarantined_at INTEGER NOT NULL,
+        PRIMARY KEY (asset, timeframe_minutes, source_table))`),
+    env.AZ_LEARNING_DB.prepare(`
+      INSERT OR IGNORE INTO learning_quarantine(
+        asset,timeframe_minutes,source_table,reason,quarantined_at)
+      VALUES('BTC_GBP',1,'aggregates',
+        'Pre-v16.28 pair identity could be stale; retained for audit and excluded from models',?)`
+    ).bind(Date.now())
+  ]);
+}
+
+function validateEvent(e, batchVersion) {
   if (!e || e.schema !== 1 || typeof e.id !== "string" ||
       !/^[0-9a-f-]{20,40}$/i.test(e.id)) return null;
   const asset = String(e.asset || "").toUpperCase();
@@ -234,14 +280,29 @@ function validateEvent(e) {
   if (!Number.isFinite(rawP) || rawP < .02 || rawP > .98) return null;
   if (e.outcome !== "UP" && e.outcome !== "DOWN") return null;
   if (typeof e.correct !== "boolean") return null;
-  return { id: e.id, asset, timeframe, rawP,
+  const appVersion = String(e.app_version || batchVersion || "legacy").trim();
+  if (appVersion !== "legacy" && !/^\d+\.\d+(?:\.\d+)?$/.test(appVersion)) return null;
+  return { id: e.id, asset, timeframe, rawP, appVersion,
     outcomeUp: e.outcome === "UP", correct: e.correct };
+}
+
+function versionAtLeast(actual, minimum) {
+  if (!/^\d+\.\d+(?:\.\d+)?$/.test(actual)) return false;
+  const a = actual.split(".").map(Number), b = minimum.split(".").map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const av = a[i] || 0, bv = b[i] || 0;
+    if (av !== bv) return av > bv;
+  }
+  return true;
 }
 
 async function publishModel(env) {
   if (!env.AZ_GITHUB_TOKEN) throw new Error("AZ_GITHUB_TOKEN secret is missing");
+  await ensureLearningSchema(env);
   const rows = await env.AZ_LEARNING_DB.prepare(
-    "SELECT asset,timeframe_minutes,samples,correct,outcome_up,raw_probability_sum FROM aggregates"
+    `SELECT asset,timeframe_minutes,SUM(samples) samples,SUM(correct) correct,
+       SUM(outcome_up) outcome_up,SUM(raw_probability_sum) raw_probability_sum
+     FROM versioned_aggregates GROUP BY asset,timeframe_minutes`
   ).all();
   const assets = {};
   for (const row of rows.results || []) {
@@ -250,6 +311,7 @@ async function publishModel(env) {
     const winRate = correct / n;
     if (winRate < MIN_MODEL_WIN_RATE) continue;
     const lower = wilsonLower(correct, n);
+    if (lower <= BREAK_EVEN_92) continue;
     const observed = clamp(Number(row.outcome_up) / n, .02, .98);
     const averageRaw = clamp(Number(row.raw_probability_sum) / n, .02, .98);
     const bias = clamp(logit(observed) - logit(averageRaw), -.60, .60);
@@ -264,7 +326,10 @@ async function publishModel(env) {
   }
   const now = new Date().toISOString();
   const model = { schema: 2, version: `gateway-${now.slice(0, 10)}`,
-    generated_at: now, max_weight: .05, assets };
+    generated_at: now, minimum_app_version: VERSIONED_LEARNING_MIN,
+    qualification: { min_samples: MIN_MODEL_SAMPLES,
+      min_win_rate: MIN_MODEL_WIN_RATE, min_lower_95: BREAK_EVEN_92 },
+    max_weight: .05, assets };
   await putGitHubFile(env, JSON.stringify(model, null, 2) + "\n");
   await env.AZ_LEARNING_DB.prepare(
     "DELETE FROM seen_events WHERE received_at < ?"
