@@ -1,1922 +1,37 @@
-package com.example.floatingcandlescanner;
-
-import android.accessibilityservice.AccessibilityService;
-import android.animation.AnimatorSet;
-import android.animation.ObjectAnimator;
-import android.animation.ValueAnimator;
-import android.app.*;
-import android.content.*;
-import android.graphics.*;
-import android.graphics.drawable.GradientDrawable;
-import android.hardware.HardwareBuffer;
-import android.media.AudioAttributes;
-import android.media.RingtoneManager;
-import android.net.Uri;
-import android.os.*;
-import android.provider.Settings;
-import android.view.*;
-import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
-import android.widget.*;
-
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.ArrayDeque;
-import java.util.List;
-import java.util.Locale;
-import java.util.concurrent.Executor;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-/**
- * Screen-share-free broker chart scanner.
- *
- * Android 11+ Accessibility screenshots are analyzed in memory. A small
- * TYPE_ACCESSIBILITY_OVERLAY AZ logo stays above the broker. Signal details
- * appear only for statistically verified setups. The service never stores screenshots or credentials.
- */
-public class AutoSymbolAccessibilityService extends AccessibilityService {
-    private static final String CCY = "EUR|GBP|USD|JPY|CHF|AUD|NZD|CAD|SGD|HKD|CNH|CNY|INR|BRL|MXN|CLP|COP|PEN|ARS|ZAR|TRY|SEK|NOK|DKK|PLN|HUF|CZK|AED|SAR|JOD|BHD|KWD|QAR|OMR|ILS|THB|IDR|MYR|PHP|VND|KRW|PKR|BDT|EGP|MAD|RON|BGN|ISK|RUB|UAH|KZT|UZS|GEL|AMD|AZN|LKR|NPR|NGN|KES|GHS";
-    private static final String ASSET = CCY + "|XAU|XAG|BTC|ETH|SOL|BNB";
-    private static final Pattern PAIR = Pattern.compile("(?i)(?<![A-Z0-9])(" + ASSET + ")\\s*[/\\-_:]?\\s*(" + ASSET + "|USDT)(?![A-Z0-9])");
-    // Quotex exposes many OTC crypto selectors as a full instrument name rather
-    // than a BASE/QUOTE pair (for example, "Cardano OTC"). Keep this list
-    // explicit so unrelated overlay/status text ending in OTC cannot be accepted
-    // as a verified broker instrument.
-    private static final String NAMED_OTC_ASSET =
-            // Cryptocurrencies exposed by name rather than BASE/QUOTE.
-            "CARDANO|BITCOIN|ETHEREUM|LITECOIN|RIPPLE|DOGECOIN|SOLANA|POLKADOT|"+
-            "AVALANCHE|CHAINLINK|POLYGON|TRON|TONCOIN|BINANCE COIN|BITCOIN CASH|"+
-            // Stocks.
-            "APPLE|CISCO|INTEL|MCDONALD(?:'S|S)?|MICROSOFT|PFIZER(?: INC)?|"+
-            "EXXONMOBIL|EXXON MOBIL|AMAZON|ALIBABA|CITIGROUP(?: INC)?|META|"+
-            "TESLA|NVIDIA|GOOGLE|ALPHABET|NETFLIX|COCA[- ]?COLA|"+
-            // Commodities.
-            "BRENT OIL|WTI CRUDE OIL|SILVER|GOLD|NATURAL GAS|PALLADIUM(?: SPOT)?|"+
-            "PLATINUM(?: SPOT)?|"+
-            // Indices. Slash variants are normalized before matching.
-            "AUS ?200|100GBP|CAC ?40|D30/?EUR|D30EUR|DJI30|E35EUR|E50/?EUR";
-    private static final Pattern NAMED_OTC = Pattern.compile(
-            "(?i)(?<![A-Z0-9])(" + NAMED_OTC_ASSET + ")\\s+OTC(?![A-Z0-9])");
-    private static final Pattern TF_M = Pattern.compile("(?i)(?<![A-Z0-9])M\\s*([1-5])(?!\\d)");
-    private static final Pattern TF_MIN = Pattern.compile("(?i)(?<!\\d)([1-5])\\s*(?:M|MIN|MINS|MINUTE|MINUTES)(?![A-Z])");
-
-    private static final String PREFS="scanner";
-    private static final String SIGNAL_CH="trade_signal_sound_v122";
-    private static final String SIGNAL_POPUP_CH="trade_signal_popup_v161";
-    private static final int SIGNAL_ID=5501;
-    private static final long POST_CLOSE_SCAN_DELAY_MS=650L;
-    private static final long ENTRY_WINDOW_MS=5_000L;
-    private static final long AUTO_RETRY_MS=1_500L;
-    private static final long LIVE_REFRESH_MS=1_000L;
-    private static final long LIVE_CAPTURE_MIN_GAP_MS=900L;
-    private static final long LIVE_BOUNDARY_GUARD_MS=1_500L;
-    private static volatile AutoSymbolAccessibilityService instance;
-
-    private final Handler main=new Handler(Looper.getMainLooper());
-    private boolean scanBusy=false;
-    private WindowManager wm;
-    private LinearLayout statusBox;
-    private TextView statusText, symbolText, timingText, liveText, infoDetails;
-    private LinearLayout signalCard;
-    private LinearLayout topInfoBar;
-    private TextView topInfoText;
-    private WindowManager.LayoutParams topInfoLp;
-    private boolean infoCardPinned=false;
-    // A BUY/SELL popup belongs to the user once shown. Scanner refreshes may
-    // update the banner behind it, but only the popup CLOSE action may remove it.
-    private boolean signalCardManualCloseOnly=false;
-    private OnlineLearner learner;
-    private TrainingStore training;
-    private PatternModeLearningStore patternLearning;
-    private BrokerBoardLearner boardLearner;
-    private SelfDecisionEngine selfDecision;
-    private QuickDecisionEngine quickDecision;
-    private MarketDataService marketData;
-    private volatile TechnicalModel.Multi externalTechnical;
-    private volatile String externalAsset="";
-    private volatile String externalStatus="WEB DATA OFF";
-    private volatile long externalUpdatedAt=0L;
-    private volatile boolean externalFetching=false;
-    private SharedPreferences prefs;
-    private CandleVision.Analysis lastAnalysis;
-    private long lastAlertAt=0L;
-    private String lastAlertKey="";
-    private String lastQuickPopupKey="";
-    private String lastActivePackage="";
-    private long lastAutoBoundaryMs=Long.MIN_VALUE;
-    private int scheduledTimeframeMinutes=-1;
-    private long predictionTargetStartMs=0L;
-    private long preparedBoundaryMs=Long.MIN_VALUE;
-    private long pendingBoundaryMs=Long.MIN_VALUE;
-    private long lastCaptureAttemptAt=0L;
-    private long lastLiveRefreshAt=0L;
-    private long lastSuccessfulAutoScanAt=0L;
-    private int lastScreenshotError=0;
-    private String lastDirection="";
-    private int lastDirectionPercent=0;
-    private int lastSignalHorizon=0;
-    private int lastWinRate=-1;
-    private int lastWinRateSamples=0;
-    private String lastLiveDirection="";
-    private int lastLivePercent=0;
-    private String lastLiveStatus="AI LIVE â€¢ starting";
-    private SignalResult lastNotifiedSignal;
-    private int lastNotifiedHorizon=1;
-
-    private final Runnable scanTick=new Runnable(){
-        @Override public void run(){
-            if(scannerEnabled()) candleCadenceTick();
-            main.postDelayed(this,1000L);
-        }
-    };
-
-    // Learning is intentionally NOT timer-driven. Labels are created/resolved
-    // only from official post-close scans at exact candle boundaries.
-    private final Runnable learnTick=new Runnable(){
-        @Override public void run(){ /* boundary-driven learning only */ }
-    };
-
-    @Override protected void onServiceConnected(){
-        super.onServiceConnected();
-        instance=this;
-        prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
-        learner=new OnlineLearner(this);
-        training=new TrainingStore(this);
-        patternLearning=new PatternModeLearningStore(this);
-        boardLearner=new BrokerBoardLearner(this);
-        selfDecision=new SelfDecisionEngine();
-        quickDecision=new QuickDecisionEngine();
-        marketData=new MarketDataService();
-        learner.setAsset(currentAsset());
-        CommunityLearningSync.refreshAndFlushAsync(this);
-        wm=(WindowManager)getSystemService(WINDOW_SERVICE);
-        createNotificationChannel();
-        if(scannerEnabled()) showStatusOverlay("READY");
-        resetCadenceSchedule();
-        main.removeCallbacks(scanTick);
-        main.removeCallbacks(learnTick);
-        // Pending records from older/timer-based versions are unsafe to resolve.
-        training.clearPending();
-        main.post(scanTick);
-    }
-
-    @Override public boolean onUnbind(Intent intent){
-        instance=null;
-        main.removeCallbacks(scanTick);
-        main.removeCallbacks(learnTick);
-        removeOverlays();
-        return super.onUnbind(intent);
-    }
-
-    @Override public void onDestroy(){
-        instance=null;
-        main.removeCallbacks(scanTick);
-        main.removeCallbacks(learnTick);
-        removeOverlays();
-        super.onDestroy();
-    }
-
-    @Override public void onAccessibilityEvent(AccessibilityEvent event){
-        try{
-            if(event!=null && event.getPackageName()!=null){
-                String eventPackage=event.getPackageName().toString();
-                // Never learn a pair back from AZ's own banner/card text. Doing
-                // so can make a previously selected symbol look permanently
-                // current after the broker has changed to another asset.
-                if(getPackageName().equals(eventPackage))return;
-                lastActivePackage=eventPackage;
-            }
-
-            AccessibilityNodeInfo root=getRootInActiveWindow();
-            if(root==null)return;
-            String visible=collectVisibleText(root);
-            root.recycle();
-            String symbol=detectSymbol(visible);
-            String timeframe=detectTimeframe(visible);
-            long now=System.currentTimeMillis();
-
-            SharedPreferences.Editor edit=prefs.edit()
-                    .putString("detected_package",lastActivePackage);
-            if(symbol!=null&&!symbol.isEmpty()){
-                String previous=prefs.getString("detected_asset","");
-                if(!symbol.equals(previous)){
-                    training.clearPending();
-                    if(boardLearner!=null)boardLearner.clearPending();
-                    learner.setAsset(symbol);
-                    if(selfDecision!=null)selfDecision.reset();
-                    if(quickDecision!=null)quickDecision.reset();
-                    lastAlertKey="";
-                }
-                edit.putString("detected_asset",symbol)
-                        .putLong("detected_asset_time",now);
-            }
-            if(timeframe!=null&&!timeframe.isEmpty())
-                edit.putString("detected_timeframe",timeframe)
-                        .putString("last_valid_timeframe",timeframe)
-                        .putLong("detected_timeframe_time",now);
-            edit.apply();
-            updateSymbolText();
-        }catch(Exception ignored){}
-    }
-
-    @Override public void onInterrupt(){}
-
-    public static boolean isConnected(){ return instance!=null; }
-
-    public static void setScannerEnabled(Context c,boolean enabled){
-        c.getSharedPreferences(PREFS,MODE_PRIVATE).edit().putBoolean("scanner_enabled",enabled).apply();
-        AutoSymbolAccessibilityService s=instance;
-        if(s!=null){
-            if(enabled){
-                s.resetCadenceSchedule();
-                s.showStatusOverlay("READY");
-                s.main.removeCallbacks(s.scanTick);
-                s.main.post(s.scanTick);
-            }else{
-                s.resetCadenceSchedule();
-                if(s.training!=null)s.training.clearPending();
-                if(s.boardLearner!=null)s.boardLearner.clearPending();
-                s.removeOverlays();
-                s.main.removeCallbacks(s.scanTick);
-                s.cancelSignalNotification();
-            }
-        }
-    }
-
-    public static void setBannerMonitorEnabled(Context c,boolean enabled){
-        c.getSharedPreferences(PREFS,MODE_PRIVATE).edit()
-                .putBoolean("banner_monitor_enabled",enabled).apply();
-        AutoSymbolAccessibilityService s=instance;
-        if(s==null)return;
-        s.main.post(()->{
-            if(enabled && s.scannerEnabled()){
-                s.createTopInfoBar();
-                if(s.topInfoBar!=null)s.topInfoBar.setVisibility(View.VISIBLE);
-            }else{
-                s.removeTopInfoBar();
-            }
-        });
-    }
-
-    private boolean bannerMonitorEnabled(){
-        if(prefs==null)prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
-        return prefs.getBoolean("banner_monitor_enabled",true);
-    }
-
-    private boolean scannerEnabled(){
-        if(prefs==null)prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
-        return prefs.getBoolean("scanner_enabled",false);
-    }
-
-    private void resetCadenceSchedule(){
-        scheduledTimeframeMinutes=-1;
-        lastAutoBoundaryMs=Long.MIN_VALUE;
-        predictionTargetStartMs=0L;
-        preparedBoundaryMs=Long.MIN_VALUE;
-        pendingBoundaryMs=Long.MIN_VALUE;
-        lastCaptureAttemptAt=0L;
-        lastLiveRefreshAt=0L;
-        if(selfDecision!=null)selfDecision.reset();
-        lastSuccessfulAutoScanAt=0L;
-        lastScreenshotError=0;
-        lastDirection="";
-        lastDirectionPercent=0;
-        lastSignalHorizon=0;
-        lastWinRate=-1;
-        lastWinRateSamples=0;
-    }
-
-    /**
-     * Completed-candle next-entry mode. The scanner waits until the broker-aligned
-     * candle has actually closed, pauses briefly so the chart can render that close,
-     * and only then captures/analyzes the chart for the newly opened candle.
-     *
-     * This is intentionally different from pre-entry prediction: the just-finished
-     * candle is never guessed before it closes. A small post-close processing delay
-     * is unavoidable because the completed candle must exist before it can be read.
-     */
-    private void candleCadenceTick(){
-        int minutes=selectedTimeframeMinutes();
-        long now=System.currentTimeMillis();
-        if(minutes<=0){
-            scheduledTimeframeMinutes=-1;
-            lastAutoBoundaryMs=Long.MIN_VALUE;
-            preparedBoundaryMs=Long.MIN_VALUE;
-            updateTimingText(now,0L);
-            maybeLiveRefresh(now,0L,0L);
-            return;
-        }
-
-        long interval=minutes*60_000L;
-        long currentBoundary=(now/interval)*interval;
-        long nextBoundary=currentBoundary+interval;
-
-        if(scheduledTimeframeMinutes!=minutes){
-            if(scheduledTimeframeMinutes!=-1 && training!=null)training.clearPending();
-            scheduledTimeframeMinutes=minutes;
-            // Do not lock an official signal from a random partially-completed
-            // candle on startup. Live AI refresh can run, but the first official
-            // next-candle decision waits for the next real close.
-            lastAutoBoundaryMs=currentBoundary;
-            preparedBoundaryMs=Long.MIN_VALUE;
-            pendingBoundaryMs=Long.MIN_VALUE;
-        }
-
-        if(currentBoundary>lastAutoBoundaryMs && preparedBoundaryMs!=currentBoundary){
-            long sinceClose=now-currentBoundary;
-            if(sinceClose>=POST_CLOSE_SCAN_DELAY_MS && !scanBusy &&
-                    now-lastCaptureAttemptAt>=LIVE_CAPTURE_MIN_GAP_MS){
-                predictionTargetStartMs=currentBoundary;
-                pendingBoundaryMs=currentBoundary;
-                captureAndAnalyze(true,currentBoundary,false);
-            }
-        }
-
-        // Mark the boundary consumed only after a valid screenshot was analyzed.
-        // Failed screenshots remain eligible for retry on the following tick.
-        if(preparedBoundaryMs==currentBoundary) lastAutoBoundaryMs=currentBoundary;
-
-        // Every-second visual refresh. Suppress it just before/after a candle
-        // boundary so Android's screenshot rate limit cannot steal the official
-        // completed-candle capture.
-        maybeLiveRefresh(now,currentBoundary,nextBoundary);
-        updateTimingText(now,nextBoundary);
-    }
-
-    private void maybeLiveRefresh(long now,long currentBoundary,long nextBoundary){
-        if(scanBusy || !scannerEnabled())return;
-        if(now-lastLiveRefreshAt<LIVE_REFRESH_MS)return;
-        if(now-lastCaptureAttemptAt<LIVE_CAPTURE_MIN_GAP_MS)return;
-
-        if(nextBoundary>0L){
-            long until=nextBoundary-now;
-            long since=now-currentBoundary;
-            if(until>=0L && until<=LIVE_BOUNDARY_GUARD_MS)return;
-            if(since>=0L && since<=POST_CLOSE_SCAN_DELAY_MS+750L)return;
-        }
-
-        lastLiveRefreshAt=now;
-        captureAndAnalyze(false,0L,true);
-    }
-
-    private int selectedTimeframeMinutes(){
-        String tf=currentTimeframeLabel();
-        if(tf.matches("M[1-5]")) return tf.charAt(1)-'0';
-        return -1;
-    }
-
-    private long nextBoundary(long now,int minutes){
-        if(minutes<=0)return 0L;
-        long interval=minutes*60_000L;
-        return ((now/interval)+1L)*interval;
-    }
-
-    private String clock(long when){
-        if(when<=0L)return "--:--:--";
-        return new SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(new Date(when));
-    }
-
-    private String countdown(long millis){
-        long sec=Math.max(0L,(millis+999L)/1000L);
-        long h=sec/3600L; sec%=3600L;
-        long m=sec/60L, s=sec%60L;
-        return h>0?String.format(Locale.getDefault(),"%d:%02d:%02d",h,m,s)
-                :String.format(Locale.getDefault(),"%02d:%02d",m,s);
-    }
-
-    private String entryState(long now,long target){
-        if(target<=0L)return "ENTRY TIME UNKNOWN";
-        if(now<target)return "ENTRY IN "+countdown(target-now);
-        long late=now-target;
-        if(late<=ENTRY_WINDOW_MS)return "ENTRY NOW â€¢ 00:00";
-        return "LATE";
-    }
-
-    private String winRateText(){
-        if(lastWinRateSamples<5 || lastWinRate<0)
-            return "WIN RATE: LEARNING"+(lastWinRateSamples>0?" ("+lastWinRateSamples+")":"");
-        return "RECENT WIN RATE "+lastWinRate+"% ("+lastWinRateSamples+")";
-    }
-
-    private void refreshSignalDisplay(long now){
-        if(statusText==null || lastDirection.isEmpty())return;
-        String entry=lastDirection+" ENTRY "+clock(predictionTargetStartMs);
-        statusText.setText(lastDirection+" "+lastDirectionPercent+"%\n"+entry+"\n"+entryState(now,predictionTargetStartMs)+"\n"+winRateText());
-        statusText.setTextColor("BUY".equals(lastDirection)?Color.rgb(134,239,172):Color.rgb(252,165,165));
-    }
-
-    private void updateTimingText(long now,long nextBoundary){
-        main.post(()->{
-            refreshSignalDisplay(now);
-            refreshInfoCard(now);
-            if(timingText==null)return;
-            if(nextBoundary<=0L){
-                timingText.setText("Candle time unavailable");
-            }else if(predictionTargetStartMs>0L && now<=predictionTargetStartMs+ENTRY_WINDOW_MS){
-                timingText.setText("M"+Math.max(1,lastSignalHorizon)+" â€¢ target candle "+clock(predictionTargetStartMs));
-            }else{
-                timingText.setText("Next entry candle "+clock(nextBoundary)+" â€¢ "+countdown(nextBoundary-now));
-            }
-        });
-    }
-
-    private void captureAndAnalyze(){
-        captureAndAnalyze(false,predictionTargetStartMs,false);
-    }
-
-    private void captureAndAnalyze(boolean automatic,long targetBoundary,boolean liveRefresh){
-        if(Build.VERSION.SDK_INT<30||scanBusy||!scannerEnabled())return;
-        scanBusy=true;
-        lastCaptureAttemptAt=System.currentTimeMillis();
-        Executor ex=getMainExecutor();
-        TakeScreenshotCallback cb=new TakeScreenshotCallback(){
-            @Override public void onSuccess(ScreenshotResult screenshot){
-                Bitmap software=null;
-                HardwareBuffer hb=null;
-                boolean valid=false;
-                try{
-                    hb=screenshot.getHardwareBuffer();
-                    Bitmap hw=Bitmap.wrapHardwareBuffer(hb,screenshot.getColorSpace());
-                    if(hw!=null)software=hw.copy(Bitmap.Config.ARGB_8888,false);
-                    if(software!=null) valid=analyzeBitmap(software,liveRefresh,automatic,targetBoundary);
-                    else showUnavailable("NO FRAME â€¢ AUTO RETRY");
-                }catch(Exception e){
-                    showUnavailable("SCAN RETRY");
-                }finally{
-                    if(software!=null&&!software.isRecycled())software.recycle();
-                    if(hb!=null)hb.close();
-                    scanBusy=false;
-                    if(automatic && valid){
-                        preparedBoundaryMs=targetBoundary;
-                        lastAutoBoundaryMs=targetBoundary;
-                        pendingBoundaryMs=Long.MIN_VALUE;
-                        lastSuccessfulAutoScanAt=System.currentTimeMillis();
-                        lastScreenshotError=0;
-                        if(prefs!=null)prefs.edit().putLong("last_successful_scan_at",System.currentTimeMillis()).apply();
-                    }else if(automatic){
-                        pendingBoundaryMs=Long.MIN_VALUE;
-                    }
-                }
-            }
-            @Override public void onFailure(int errorCode){
-                scanBusy=false;
-                lastScreenshotError=errorCode;
-                if(automatic)pendingBoundaryMs=Long.MIN_VALUE;
-                if(errorCode==ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT){
-                    // The 1-second heartbeat retries automatically.
-                    return;
-                }
-                if(liveRefresh)return;
-                if(Build.VERSION.SDK_INT>=34 && errorCode==ERROR_TAKE_SCREENSHOT_SECURE_WINDOW)
-                    showUnavailable("BROKER BLOCKS SCREEN CAPTURE");
-                else if(errorCode==ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS)
-                    showUnavailable("ACCESSIBILITY OFF");
-                else showUnavailable("AUTO SCAN RETRY");
-            }
-        };
-
-        // Android 14+ can capture just the active broker window. This avoids our
-        // accessibility overlay being included in the candle image. Fall back to
-        // the full display on Android 11-13 or when no active window is available.
-        if(Build.VERSION.SDK_INT>=34){
-            AccessibilityNodeInfo root=null;
-            try{
-                root=getRootInActiveWindow();
-                if(root!=null){
-                    int windowId=root.getWindowId();
-                    root.recycle();
-                    root=null;
-                    takeScreenshotOfWindow(windowId,ex,cb);
-                    return;
-                }
-            }catch(Exception ignored){
-            }finally{
-                if(root!=null)try{root.recycle();}catch(Exception ignored){}
-            }
-        }
-        takeScreenshot(Display.DEFAULT_DISPLAY,ex,cb);
-    }
-
-    private CandleVision.Analysis analyzeWithAutoCalibration(Bitmap b){
-        int theme=prefs.getInt("theme",0), sensitivity=prefs.getInt("sensitivity",1);
-        boolean highAccuracy=prefs.getBoolean("high_accuracy",true);
-        int savedL=prefs.getInt("left",5), savedT=prefs.getInt("top",18);
-        int savedR=prefs.getInt("right",96), savedB=prefs.getInt("bottom",80);
-        boolean force=prefs.getBoolean("force_auto_calibration",false);
-        CandleVision.Analysis best=CandleVision.analyze(
-                b,savedL,savedT,savedR,savedB,theme,sensitivity,learner,highAccuracy);
-        int bestScore=calibrationScore(best);
-        if(!force && bestScore>=108)return best;
-
-        // Candidate windows cover common portrait broker layouts. CandleVision
-        // independently removes wide BUY/SELL controls from the chosen region.
-        int[][] candidates={
-                {2,8,98,90},{3,12,97,86},{5,18,96,80},
-                {6,22,95,78},{2,16,98,76},{8,12,94,82}
-        };
-        int[] chosen={savedL,savedT,savedR,savedB};
-        for(int[] box:candidates){
-            if(box[0]==savedL&&box[1]==savedT&&box[2]==savedR&&box[3]==savedB)continue;
-            CandleVision.Analysis trial=CandleVision.analyze(
-                    b,box[0],box[1],box[2],box[3],theme,sensitivity,learner,highAccuracy);
-            int score=calibrationScore(trial);
-            if(score>bestScore){best=trial;bestScore=score;chosen=box;}
-        }
-        if(bestScore>=108){
-            prefs.edit().putInt("left",chosen[0]).putInt("top",chosen[1])
-                    .putInt("right",chosen[2]).putInt("bottom",chosen[3])
-                    .putBoolean("force_auto_calibration",false)
-                    .putLong("auto_calibrated_at",System.currentTimeMillis()).apply();
-        }
-        return best;
-    }
-
-    private int calibrationScore(CandleVision.Analysis a){
-        if(a==null)return 0;
-        return (a.valid?100:0)+Math.max(0,a.detectedBins);
-    }
-
-    private boolean analyzeBitmap(Bitmap b,boolean liveRefresh,boolean automatic,long targetBoundary){
-        boolean pairVerified=refreshDetectedContext();
-        if(!pairVerified){
-            showPairNotVerified();
-            return false;
-        }
-        String asset=currentAsset();
-        learner.setAsset(asset);
-        CandleVision.Analysis a=analyzeWithAutoCalibration(b);
-        if(a==null||!a.valid||a.detectedBins<8){
-            if(liveRefresh)showLiveStatus("AI LIVE â€¢ FINDING CANDLES");
-            else showUnavailable("FINDING CANDLES");
-            return false;
-        }
-        requestExternalWebData(asset);
-        TechnicalModel.Multi web=usableExternalData(asset);
-        if(web!=null){
-            boolean otc=asset.toUpperCase(Locale.US).contains("OTC");
-            HybridPredictionEngine.Fusion fused=HybridPredictionEngine.fuse(
-                    a.horizons,web,prefs.getBoolean("high_accuracy",true),
-                    prefs.getBoolean("elite_mode",true),prefs.getInt("sensitivity",1),
-                    prefs.getString("session_filter","ALL"),prefs.getLong("news_lock_until",0L),
-                    learner,otc?.20:.45,otc?"REAL-MARKET CONTEXT FOR OTC":"LIVE OHLC");
-            a=new CandleVision.Analysis(fused.results,a.detectedBins,a.latestY,a.valid,a.boardState);
-            externalStatus=fused.dataStatus+(otc?" â€¢ OTC CONTEXT ONLY":"");
-        }
-        lastAnalysis=a;
-        if(selfDecision!=null)selfDecision.observe(a.horizons);
-
-        int selectedH=selectedHorizonIndex();
-        if(selectedH<0){
-            if(liveRefresh)showLiveStatus("AI LIVE â€¢ TIMEFRAME UNKNOWN");
-            else showUnavailable("TIMEFRAME UNKNOWN");
-            return false;
-        }
-        if(selectedH>=a.horizons.length){
-            if(liveRefresh)showLiveStatus("AI LIVE â€¢ TIMEFRAME UNKNOWN");
-            else showUnavailable("TIMEFRAME UNKNOWN");
-            return false;
-        }
-
-        SignalResult best=a.horizons[selectedH];
-        int horizon=selectedH+1;
-        if(best==null){
-            if(liveRefresh)showLiveStatus("AI LIVE â€¢ NO DATA");
-            else showUnavailable("NO PROBABILITY DATA");
-            return false;
-        }
-
-        SignalResult decision=selfDecision==null?best:selfDecision.decide(best,horizon,learner);
-
-        // v14.7 broker-board learning: every live frame may contribute to state
-        // stability, but only an exact future candle close is allowed to become
-        // a training label. No screenshots are saved.
-        boolean boardLearning=prefs.getBoolean("broker_board_learning",true);
-        if(boardLearning && boardLearner!=null && a.boardState!=null){
-            if(liveRefresh)boardLearner.observeLive(asset,selectedH,a.boardState);
-            if(automatic && targetBoundary>0L)
-                boardLearner.resolve(targetBoundary,asset,selectedH,a.latestY);
-            // Resolved board memory is safe to use on every frame. Live frames are
-            // never labels; they only query previously validated history.
-            decision=boardLearner.apply(asset,selectedH,a.boardState,decision);
-        }
-
-        // Self-learning is aligned to the exact completed-candle boundary. Only
-        // official automatic scans create/resolve labels; 1-second live frames
-        // and manual taps never become training labels.
-        if(automatic && targetBoundary>0L){
-            processLearningAtBoundary(targetBoundary,a,selectedH,decision);
-            if(boardLearning && boardLearner!=null && a.boardState!=null)
-                boardLearner.addPrediction(targetBoundary,asset,selectedH,selectedH+1,a.latestY,a.boardState);
-        }
-
-        // Keep the optional aggressive pattern mode completely outside the safe
-        // learner. Its outcomes go to a separate local store and never update
-        // OnlineLearner or the validated community-learning queue.
-        boolean automaticPatterns=prefs.getBoolean("auto_pattern_signals",false);
-        boolean officialPostClose=automatic && targetBoundary>0L;
-        if(automaticPatterns){
-            // Pattern Mode may issue an official direction only from the
-            // broker-aligned post-close scan. Live/manual frames can describe
-            // the chart, but cannot recycle an older pattern into a new trade.
-            if(officialPostClose)
-                decision=applyAutomaticPatternSignal(decision,a.boardState);
-            else
-                decision=patternNoTrade(decision,"WAITING FOR LATEST CANDLE CLOSE");
-        }else if(!officialPostClose){
-            // Safer Mode follows the same timing rule as Pattern Mode: a live
-            // or manually captured unfinished candle may update observations,
-            // but it can never become an actionable next-candle signal.
-            decision=patternNoTrade(decision,"WAITING FOR LATEST CANDLE CLOSE");
-        }
-        // Pair + timeframe are selected by OnlineLearner.setAsset/horizon;
-        // pattern quality adds the third segmentation dimension after 30 outcomes.
-        decision=learner.applySetupQuality(selectedH,decision);
-
-        // Both modes allow a confirmed Medium Chance direction (70%+).
-        // Existing completed-candle, pattern and safety gates still apply.
-        if ("BUY".equals(decision.label) || "SELL".equals(decision.label)) {
-            int finalPercent="BUY".equals(decision.label)
-                    ?decision.buyProbability:decision.sellProbability;
-            if(finalPercent<70)
-                decision=patternNoTrade(decision,"BELOW MEDIUM CHANCE (70%)");
-        }
-
-        if(automatic && targetBoundary>0L && patternLearning!=null){
-            patternLearning.resolveAndRecord(targetBoundary,asset,selectedH,selectedH+1,
-                    a.latestY,automaticPatterns?decision:null);
-        }
-
-        if(liveRefresh){
-            // Live Quick Decision remains disabled in both modes so it cannot
-            // override the completed-candle gate with an intrabar BUY/SELL.
-            showLiveDecision(decision,horizon,null);
-            return true;
-        }
-
-        // Official/manual result: one clear next-candle direction. Strong alerts
-        // still require the stricter completed-candle quality gates from the base
-        // model, while the displayed probability uses the self-decision blend.
-        showDirection(decision,horizon);
-        boolean shadowMode=prefs.getBoolean("shadow_testing_mode",false);
-        if(("BUY".equals(decision.label)||"SELL".equals(decision.label))&&!shadowMode){
-            showStrongSignal(decision,horizon);
-        } else {
-            clearStrongSignalCard();
-            if(shadowMode && statusText!=null)statusText.setText("SHADOW TEST â€¢ "+decision.label+
-                    " recorded without notification");
-        }
-        return true;
-    }
-
-    private void requestExternalWebData(String asset){
-        String key=RuntimeSecrets.getMarketDataKey();
-        String symbol=externalSymbol(asset);
-        if(key==null||key.trim().isEmpty()||symbol.isEmpty()){
-            externalStatus=key==null||key.trim().isEmpty()
-                    ?"WEB DATA OFF â€¢ API KEY NEEDED":"WEB DATA UNSUPPORTED";
-            return;
-        }
-        long now=System.currentTimeMillis();
-        if(symbol.equals(externalAsset)&&externalTechnical!=null&&now-externalUpdatedAt<40_000L)return;
-        if(externalFetching)return;
-        externalFetching=true;
-        new Thread(()->{
-            try{
-                MarketDataService.Bundle bundle=marketData.fetchAll(key,symbol);
-                externalTechnical=TechnicalModel.analyze(bundle);
-                externalAsset=symbol;
-                externalUpdatedAt=System.currentTimeMillis();
-                externalStatus="WEB OHLC ACTIVE â€¢ "+symbol;
-            }catch(Exception e){
-                externalStatus="WEB DATA WAITING â€¢ "+safeExternalError(e);
-            }finally{externalFetching=false;}
-        },"external-market-ai").start();
-    }
-
-    private TechnicalModel.Multi usableExternalData(String asset){
-        String symbol=externalSymbol(asset);
-        if(symbol.isEmpty()||!symbol.equals(externalAsset)||externalTechnical==null)return null;
-        return System.currentTimeMillis()-externalUpdatedAt<=2L*60L*1000L?externalTechnical:null;
-    }
-
-    private static String externalSymbol(String asset){
-        if(asset==null)return "";
-        Matcher m=PAIR.matcher(asset.toUpperCase(Locale.US).replace("OTC"," "));
-        if(!m.find())return "";
-        return m.group(1)+"/"+m.group(2);
-    }
-
-    private static String safeExternalError(Exception e){
-        String m=e==null?"unavailable":e.getMessage();
-        if(m==null||m.trim().isEmpty())m="unavailable";
-        return m.length()>80?m.substring(0,80):m;
-    }
-
-    private void showLiveStatus(String text){
-        main.post(()->{
-            if(!scannerEnabled())return;
-            showStatusOverlay("READY");
-            if(liveText!=null){
-                liveText.setText(text);
-                liveText.setTextColor(Color.rgb(125,211,252));
-            }
-        });
-    }
-
-    private void showLiveDecision(SignalResult r,int horizon,QuickDecisionEngine.Result quick){
-        main.post(()->{
-            if(!scannerEnabled()||r==null)return;
-            showStatusOverlay("READY");
-            updateTopInfoBar(r,horizon,quick);
-            if("WAIT".equals(r.label)){
-                lastLiveDirection="";
-                lastLivePercent=0;
-                lastLiveStatus="AI LIVE â€¢ WAITING FOR CANDLE CLOSE";
-                clearStrongSignalCard();
-                if(liveText!=null){
-                    liveText.setText("AI LIVE â€¢ NO TRADE â€¢ WAITING FOR CANDLE CLOSE");
-                    liveText.setTextColor(Color.rgb(250,204,21));
-                }
-                if(statusText!=null){
-                    statusText.setText("NO TRADE â€¢ WAITING FOR COMPLETED CANDLE");
-                    statusText.setTextColor(Color.rgb(250,204,21));
-                }
-                refreshInfoCard(System.currentTimeMillis());
-                return;
-            }
-            boolean buy=r.buyProbability>=r.sellProbability;
-            int pct=Math.max(r.buyProbability,r.sellProbability);
-            lastLiveDirection=buy?"BUY":"SELL";
-            lastLivePercent=pct;
-            if(liveText!=null){
-                int learned=boardLearner==null?0:boardLearner.totalSamples();
-                OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
-                if(quick!=null && quick.highChance && verified.highVerified()){
-                    boolean qb="BUY".equals(quick.label);
-                    showQuickSignalCard(quick,horizon);
-                    maybeNotifyQuick(quick,horizon,verified);
-                    String verifiedLabel=confidenceTitle(quick.score);
-                    lastLiveStatus=verifiedLabel+" "+quick.label+" "+quick.score+"% â€¢ "+quick.reason;
-                    liveText.setText(verifiedLabel+" "+quick.label+" "+quick.score+"% â€¢ "+tradeDuration(horizon)+
-                            " â€¢ "+quick.confirmations+"/6 â€¢ STABLE "+quick.stableScans+
-                            (prefs.getBoolean("broker_board_learning",true)?" â€¢ BOARD "+learned:""));
-                    liveText.setTextColor(qb?Color.rgb(74,222,128):Color.rgb(248,113,113));
-                    if(statusText!=null){
-                        statusText.setText(verifiedLabel+" "+quick.label+" â€¢ TRADE "+tradeDuration(horizon)+"\n"+verified.summary());
-                        statusText.setTextColor(qb?Color.rgb(134,239,172):Color.rgb(252,165,165));
-                    }
-                }else{
-                    String q=quick==null?"":(" â€¢ "+(quick.highChance?verified.status:"NO TRADE")+" "+quick.confirmations+"/6");
-                    lastLiveStatus="AI LIVE â€¢ "+lastLiveDirection+" "+pct+"% â€¢ M"+horizon+q;
-                    liveText.setText("AI LIVE â€¢ "+(buy?"BUY ":"SELL ")+pct+"% â€¢ M"+horizon+q+
-                            (prefs.getBoolean("broker_board_learning",true)?" â€¢ BOARD "+learned:""));
-                    liveText.setTextColor(buy?Color.rgb(134,239,172):Color.rgb(252,165,165));
-                    if(quick!=null && statusText!=null && quick.reason.startsWith("NO TRADE:")){
-                        statusText.setText(quick.reason);
-                        statusText.setTextColor(Color.rgb(251,191,36));
-                    }
-                }
-                refreshInfoCard(System.currentTimeMillis());
-            }
-        });
-    }
-
-    private void showUnavailable(String text){
-        main.post(()->{
-            if(!scannerEnabled())return;
-            showStatusOverlay("READY");
-            if(statusText!=null){
-                statusText.setText(text);
-                statusText.setTextColor(Color.rgb(34,211,238));
-            }
-            clearStrongSignalCard();
-            updateSymbolText();
-        });
-    }
-
-    private void showDirection(SignalResult r,int horizon){
-        main.post(()->{
-            if(!scannerEnabled())return;
-            showStatusOverlay("READY");
-            updateTopInfoBar(r,horizon,null);
-            if(r==null || "WAIT".equals(r.label)){
-                lastDirection="";
-                lastDirectionPercent=0;
-                lastSignalHorizon=horizon;
-                clearStrongSignalCard();
-                if(statusText!=null){
-                    statusText.setText("NO TRADE â€¢ WAITING FOR COMPLETED CANDLE");
-                    statusText.setTextColor(Color.rgb(250,204,21));
-                }
-                updateSymbolText();
-                return;
-            }
-            boolean buyLead=r.buyProbability>=r.sellProbability;
-            lastDirection=buyLead?"BUY":"SELL";
-            lastDirectionPercent=Math.max(r.buyProbability,r.sellProbability);
-            lastSignalHorizon=horizon;
-            int hi=Math.max(0,Math.min(4,horizon-1));
-            lastWinRateSamples=learner.recentCount(hi);
-            lastWinRate=lastWinRateSamples==0?-1:learner.recentAccuracyPct(hi);
-            if(predictionTargetStartMs<=0L){
-                int minutes=selectedTimeframeMinutes();
-                predictionTargetStartMs=minutes>0?nextBoundary(System.currentTimeMillis(),minutes):0L;
-            }
-            refreshSignalDisplay(System.currentTimeMillis());
-            updateSymbolText();
-        });
-    }
-
-    private void showStrongSignal(SignalResult r,int horizon){
-        main.post(()->{
-            if(!scannerEnabled()||r==null)return;
-            int pct="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
-            if(pct<70){
-                clearStrongSignalCard();
-                return;
-            }
-            int c="BUY".equals(r.label)?Color.rgb(134,239,172):Color.rgb(252,165,165);
-            showSignalCard(r,horizon,c);
-            maybeNotify(r,horizon);
-        });
-    }
-
-    private void clearStrongSignalCard(){
-        if(infoCardPinned || signalCardManualCloseOnly)return;
-        if(signalCard!=null){
-            try{wm.removeView(signalCard);}catch(Exception ignored){}
-            signalCard=null;
-        }
-    }
-
-    /** Top broker-board banner requested for the marked chart-header space. */
-    private void updateTopInfoBar(SignalResult r,int horizon,QuickDecisionEngine.Result quick){
-        if(!bannerMonitorEnabled() || r==null)return;
-        if(topInfoText==null)createTopInfoBar();
-        if(topInfoText==null)return;
-        String direction="WAIT".equals(r.label)?"NO TRADE":r.label;
-        int pct=Math.max(r.buyProbability,r.sellProbability);
-        boolean patternMode=prefs.getBoolean("auto_pattern_signals",false);
-        if(!patternMode && quick!=null && quick.highChance){
-            direction=quick.label;
-            pct=quick.score;
-        }
-        if(!patternMode){
-            int minimum=Math.max(70,prefs.getInt("quick_decision_threshold",85));
-            if(pct<minimum || "WAIT".equals(r.label))direction="NO TRADE";
-        }
-        String pattern=validatedBannerPattern(r);
-        if(pattern.isEmpty() || "MULTI-FACTOR CONFLUENCE".equals(pattern))pattern="NOT DETECTED";
-        boolean recentPattern=pattern.startsWith("RECENT ");
-        if(recentPattern)pattern=pattern.substring("RECENT ".length()).trim();
-        long entryAt=predictionTargetStartMs>System.currentTimeMillis()
-                ?predictionTargetStartMs:nextBoundary(System.currentTimeMillis(),Math.max(1,horizon));
-        String entry=new SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(new Date(entryAt));
-        String score="NO TRADE".equals(direction)?"":" â€¢ "+pct+"%";
-        String trend=marketTrend(lastAnalysis==null?null:lastAnalysis.boardState);
-        String trendReason="";
-        if("NO TRADE".equals(direction) && trend.contains("EXTENDED"))
-            trendReason=" â€¢ WAIT FOR PULLBACK";
-        else if("NO TRADE".equals(direction) && quick!=null
-                && quick.reason!=null && quick.reason.startsWith("NO TRADE:"))
-            trendReason=" â€¢ "+quick.reason.substring("NO TRADE:".length()).trim();
-        topInfoText.setText("NEXT CANDLE: "+direction+score+"\n"+
-                (recentPattern?"RECENT PATTERN: ":"PATTERN: ")+pattern+"\n"+
-                "TREND: "+trend+trendReason+"\n"+
-                currentAsset()+" â€¢ M"+Math.max(1,horizon)+" â€¢ ENTRY "+entry);
-        topInfoText.setTextColor("NO TRADE".equals(direction)
-                ?Color.rgb(250,204,21):("BUY".equals(direction)
-                ?Color.rgb(134,239,172):Color.rgb(252,165,165)));
-    }
-
-    private SignalResult applyAutomaticPatternSignal(SignalResult r,CandleVision.BoardState state){
-        if(r==null)return null;
-        String pattern=validatedBannerPattern(r);
-        String direction=directionFromPattern(pattern);
-        if(direction.isEmpty())return patternNoTrade(r,"NO STRONG CONFIRMED PATTERN");
-
-        // Pattern mode is deliberately decisive only for a genuinely strong,
-        // completed and visually confirmed setup from the newest closed candle.
-        // It may override the base model, but never a weak/neutral/stale setup.
-        int strength=Math.max(r.strength,Math.max(r.buyProbability,r.sellProbability));
-        if(strength<70)return patternNoTrade(r,"PATTERN BELOW MEDIUM CHANCE (70%)");
-        if(state==null)return patternNoTrade(r,"LATEST CANDLE NOT VERIFIED");
-
-        // The newest completed candle must confirm the mapped direction. This
-        // prevents an earlier green Marubozu (for example) from generating BUY
-        // after the latest completed candle has turned strongly red.
-        boolean latestConfirms="BUY".equals(direction)
-                ?state.lastDirection>.12:state.lastDirection<-.12;
-        boolean recentConfirms="BUY".equals(direction)
-                ?state.recentTwoDirection>-.04:state.recentTwoDirection<.04;
-        if(!latestConfirms || !recentConfirms)
-            return patternNoTrade(r,"LATEST CLOSED CANDLE CONTRADICTS "+direction);
-
-        int directional=Math.min(100,strength);
-        int bp="BUY".equals(direction)?directional:100-directional;
-        int sp="SELL".equals(direction)?directional:100-directional;
-        String explanation="Automatic "+direction+" from strong confirmed pattern: "+pattern+
-                ". "+r.explanation;
-        return new SignalResult(direction,strength,r.score,bp,sp,r.confidence,
-                r.regime,r.rawBuyProbability,r.setupQuality,r.structure,explanation);
-    }
-
-    private SignalResult patternNoTrade(SignalResult r,String reason){
-        if(r==null)return null;
-        String explanation=reason+(r.explanation==null||r.explanation.isEmpty()
-                ?"":". "+r.explanation);
-        return new SignalResult("WAIT",r.strength,r.score,r.buyProbability,r.sellProbability,
-                r.confidence,r.regime,r.rawBuyProbability,r.setupQuality,r.structure,explanation);
-    }
-
-    private String directionFromPattern(String pattern){
-        if(pattern==null)return "";
-        String p=pattern.toUpperCase(Locale.US);
-        if(p.isEmpty() || p.startsWith("RECENT ") || p.contains("NOT DETECTED") || p.contains("NOT CONFIRMED")
-                || p.contains("AWAITING CONFIRMATION")
-                || p.contains("SPINNING TOP") || p.contains("INDECISION"))return "";
-        // Direction table for strong confirmed patterns. Dragonfly and
-        // Gravestone are intentional directional Doji exceptions; plain Doji
-        // remains neutral and cannot produce a trade.
-        boolean dragonfly=p.contains("DRAGONFLY DOJI");
-        boolean gravestone=p.contains("GRAVESTONE DOJI");
-        if(p.contains("DOJI") && !dragonfly && !gravestone)return "";
-        boolean bullish=dragonfly || p.contains("BULL") || p.contains("MORNING")
-                || (p.contains("HAMMER") && !p.contains("HANGING MAN")) || p.contains("PIERCING")
-                || p.contains("WHITE SOLDIER") || p.contains("THREE INSIDE UP")
-                || p.contains("THREE OUTSIDE UP") || p.contains("RISING THREE")
-                || p.contains("TWEEZER BOTTOM") || p.contains("INVERTED HAMMER")
-                || p.contains("LOWER-WICK BUYER") || p.contains("BUY PRESSURE")
-                || containsAny(p,"LADDER BOTTOM","MATCHING LOW","STICK SANDWICH",
-                "HOMING PIGEON","THREE STARS IN THE SOUTH","THREE RIVER BOTTOM",
-                "UNIQUE THREE RIVER","RISING WINDOW","UPSIDE TASUKI GAP");
-        boolean bearish=gravestone || p.contains("BEAR") || p.contains("EVENING")
-                || p.contains("SHOOTING STAR") || p.contains("HANGING MAN")
-                || p.contains("DARK CLOUD") || p.contains("BLACK CROW")
-                || p.contains("THREE INSIDE DOWN") || p.contains("THREE OUTSIDE DOWN")
-                || p.contains("FALLING THREE") || p.contains("UPPER-WICK SELLER")
-                || p.contains("TWEEZER TOP")
-                || p.contains("SELL PRESSURE")
-                || containsAny(p,"LADDER TOP","MATCHING HIGH","ADVANCE BLOCK",
-                "STALLED PATTERN","DELIBERATION","FALLING WINDOW",
-                "DOWNSIDE TASUKI GAP","IDENTICAL THREE CROWS");
-        return bullish==bearish?"":(bullish?"BUY":"SELL");
-    }
-
-    private static boolean containsAny(String text,String... names){
-        if(text==null)return false;
-        for(String name:names)if(text.contains(name))return true;
-        return false;
-    }
-
-    private String marketTrend(CandleVision.BoardState s){
-        if(s==null)return "UNKNOWN";
-        double directional=.36*s.trend+.30*s.sequenceBias+.22*s.momentum+.12*s.recentTwoDirection;
-        if(directional>=.16)return s.pricePosition>=.82?"BULLISH / EXTENDED":"BULLISH";
-        if(directional<=-.16)return s.pricePosition<=.18?"BEARISH / EXTENDED":"BEARISH";
-        return "RANGE / MIXED";
-    }
-
-    private void createTopInfoBar(){
-        if(wm==null || topInfoBar!=null || !bannerMonitorEnabled())return;
-        topInfoBar=new LinearLayout(this);
-        topInfoBar.setOrientation(LinearLayout.HORIZONTAL);
-        topInfoBar.setGravity(Gravity.CENTER_VERTICAL);
-        topInfoBar.setPadding(dp(12),dp(7),dp(6),dp(7));
-        GradientDrawable bg=new GradientDrawable();
-        bg.setColor(Color.argb(238,11,18,32));
-        bg.setCornerRadius(dp(14));
-        bg.setStroke(dp(2),Color.rgb(34,211,238));
-        topInfoBar.setBackground(bg);
-
-        topInfoText=new TextView(this);
-        topInfoText.setText("AZ ANALYSING LIVE CHARTâ€¦\nNEXT CANDLE â€¢ PATTERN â€¢ MARKET\nENTRY TIME");
-        topInfoText.setTextSize(11);
-        topInfoText.setTypeface(null,Typeface.BOLD);
-        topInfoText.setGravity(Gravity.CENTER);
-        topInfoText.setTextColor(Color.rgb(125,211,252));
-        topInfoBar.addView(topInfoText,new LinearLayout.LayoutParams(0,dp(82),1));
-
-        TextView hide=new TextView(this);
-        hide.setText("Ã—");
-        hide.setTextSize(17);
-        hide.setTypeface(null,Typeface.BOLD);
-        hide.setGravity(Gravity.CENTER);
-        hide.setTextColor(Color.WHITE);
-        hide.setContentDescription("Hide AZ information banner");
-        topInfoBar.addView(hide,new LinearLayout.LayoutParams(dp(28),dp(40)));
-        hide.setOnClickListener(v->setBannerMonitorEnabled(this,false));
-
-        topInfoLp=new WindowManager.LayoutParams(
-                dp(330),WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-                PixelFormat.TRANSLUCENT);
-        topInfoLp.gravity=Gravity.TOP|Gravity.START;
-        int screenW=getResources().getDisplayMetrics().widthPixels;
-        int screenH=getResources().getDisplayMetrics().heightPixels;
-        int defaultX=Math.max(0,(screenW-dp(330))/2);
-        if(prefs==null)prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
-        topInfoLp.x=Math.max(0,Math.min(prefs.getInt("banner_x",defaultX),Math.max(0,screenW-dp(330))));
-        topInfoLp.y=Math.max(0,Math.min(prefs.getInt("banner_y",dp(66)),Math.max(0,screenH-dp(88))));
-
-        // Press and drag anywhere on the banner text to move it. The close
-        // button remains separately clickable. Save the position for next use.
-        topInfoBar.setOnTouchListener(new View.OnTouchListener(){
-            int startX,startY;
-            float downX,downY;
-            @Override public boolean onTouch(View v,MotionEvent e){
-                switch(e.getActionMasked()){
-                    case MotionEvent.ACTION_DOWN:
-                        startX=topInfoLp.x; startY=topInfoLp.y;
-                        downX=e.getRawX(); downY=e.getRawY();
-                        v.setPressed(true);
-                        return true;
-                    case MotionEvent.ACTION_MOVE:
-                        int maxX=Math.max(0,getResources().getDisplayMetrics().widthPixels-dp(330));
-                        int maxY=Math.max(0,getResources().getDisplayMetrics().heightPixels-dp(88));
-                        topInfoLp.x=Math.max(0,Math.min(maxX,startX+Math.round(e.getRawX()-downX)));
-                        topInfoLp.y=Math.max(0,Math.min(maxY,startY+Math.round(e.getRawY()-downY)));
-                        try{wm.updateViewLayout(topInfoBar,topInfoLp);}catch(Exception ignored){}
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_CANCEL:
-                        v.setPressed(false);
-                        prefs.edit().putInt("banner_x",topInfoLp.x)
-                                .putInt("banner_y",topInfoLp.y).apply();
-                        return true;
-                    default:
-                        return true;
-                }
-            }
-        });
-        try{wm.addView(topInfoBar,topInfoLp);}catch(Exception e){
-            topInfoBar=null; topInfoText=null; topInfoLp=null;
-        }
-    }
-
-    private void removeTopInfoBar(){
-        if(wm!=null && topInfoBar!=null){try{wm.removeView(topInfoBar);}catch(Exception ignored){}}
-        topInfoBar=null; topInfoText=null; topInfoLp=null;
-    }
-
-    private void showStatusOverlay(String state){
-        if(wm==null)wm=(WindowManager)getSystemService(WINDOW_SERVICE);
-        if(statusBox!=null)return;
-        if(bannerMonitorEnabled())createTopInfoBar();
-
-        // Normal broker view stays clean: only the round AZ logo is visible.
-        statusBox=new LinearLayout(this);
-        statusBox.setOrientation(LinearLayout.VERTICAL);
-        statusBox.setGravity(Gravity.CENTER_HORIZONTAL);
-        statusBox.setPadding(dp(2),dp(2),dp(2),dp(2));
-
-        final WindowManager.LayoutParams lp=new WindowManager.LayoutParams(
-                dp(96),
-                dp(96),
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-                PixelFormat.TRANSLUCENT);
-        lp.gravity=Gravity.TOP|Gravity.END;
-        lp.x=dp(12);
-        lp.y=dp(120);
-
-        // Floating round bot button, similar to a chat-head. Tap = scan now; drag = move.
-        FrameLayout bubbleWrap=new FrameLayout(this);
-        LinearLayout.LayoutParams bubbleWrapLp=new LinearLayout.LayoutParams(dp(104),dp(96));
-        bubbleWrapLp.gravity=Gravity.CENTER_HORIZONTAL;
-        statusBox.addView(bubbleWrap,bubbleWrapLp);
-
-        ImageView scanBubble=new ImageView(this);
-        scanBubble.setImageResource(R.mipmap.ic_launcher);
-        scanBubble.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        scanBubble.setContentDescription("Tap to refresh. Long press for information. Drag to move.");
-        scanBubble.setClickable(true);
-        FrameLayout.LayoutParams scanLp=new FrameLayout.LayoutParams(dp(84),dp(84));
-        scanLp.gravity=Gravity.CENTER;
-        bubbleWrap.addView(scanBubble,scanLp);
-
-        // Gentle cyber pulse keeps the shortcut alive without rotating the AZ letters.
-        ObjectAnimator pulseX=ObjectAnimator.ofFloat(scanBubble,View.SCALE_X,1.0f,1.08f);
-        ObjectAnimator pulseY=ObjectAnimator.ofFloat(scanBubble,View.SCALE_Y,1.0f,1.08f);
-        ObjectAnimator glow=ObjectAnimator.ofFloat(scanBubble,View.ALPHA,.82f,1.0f);
-        pulseX.setDuration(900L); pulseY.setDuration(900L); glow.setDuration(900L);
-        pulseX.setRepeatCount(ValueAnimator.INFINITE);
-        pulseY.setRepeatCount(ValueAnimator.INFINITE);
-        glow.setRepeatCount(ValueAnimator.INFINITE);
-        pulseX.setRepeatMode(ValueAnimator.REVERSE);
-        pulseY.setRepeatMode(ValueAnimator.REVERSE);
-        glow.setRepeatMode(ValueAnimator.REVERSE);
-        AnimatorSet cyberPulse=new AnimatorSet();
-        cyberPulse.playTogether(pulseX,pulseY,glow);
-        cyberPulse.start();
-
-        // Reliable tap-versus-drag handling. Small finger movement is still a TAP.
-        final int touchSlop=ViewConfiguration.get(this).getScaledTouchSlop();
-        scanBubble.setOnTouchListener(new View.OnTouchListener(){
-            int startX,startY;
-            float downX,downY;
-            boolean dragging,longPressed;
-            final Runnable openInformation=()->{
-                if(dragging)return;
-                longPressed=true;
-                showInfoCard();
-            };
-            @Override public boolean onTouch(View v,MotionEvent e){
-                switch(e.getActionMasked()){
-                    case MotionEvent.ACTION_DOWN:
-                        startX=lp.x; startY=lp.y;
-                        downX=e.getRawX(); downY=e.getRawY();
-                        dragging=false; longPressed=false;
-                        main.postDelayed(openInformation,ViewConfiguration.getLongPressTimeout());
-                        v.setPressed(true);
-                        return true;
-                    case MotionEvent.ACTION_MOVE:
-                        float dx=e.getRawX()-downX;
-                        float dy=e.getRawY()-downY;
-                        if(!dragging && (Math.abs(dx)>touchSlop || Math.abs(dy)>touchSlop)){
-                            dragging=true;
-                            main.removeCallbacks(openInformation);
-                        }
-                        if(dragging){
-                            lp.x=Math.max(0,startX-(int)dx);
-                            lp.y=Math.max(0,startY+(int)dy);
-                            try{wm.updateViewLayout(statusBox,lp);}catch(Exception ignored){}
-                        }
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                        main.removeCallbacks(openInformation);
-                        v.setPressed(false);
-                        if(!dragging && !longPressed){
-                            runManualScan();
-                            v.performClick();
-                        }
-                        return true;
-                    case MotionEvent.ACTION_CANCEL:
-                        main.removeCallbacks(openInformation);
-                        v.setPressed(false);
-                        return true;
-                    default:
-                        return true;
-                }
-            }
-        });
-
-        try{wm.addView(statusBox,lp);}catch(Exception e){statusBox=null;}
-    }
-
-    private void runManualScan(){
-        if(!scannerEnabled()){
-            Toast.makeText(this,"Scanner is off",Toast.LENGTH_SHORT).show();
-            return;
-        }
-        if(scanBusy){
-            Toast.makeText(this,"Scan already running",Toast.LENGTH_SHORT).show();
-            return;
-        }
-        if(statusText!=null){
-            statusText.setText("SCANNINGâ€¦");
-            statusText.setTextColor(Color.rgb(34,211,238));
-        }
-        Toast.makeText(this,"Scanning candleâ€¦",Toast.LENGTH_SHORT).show();
-        int minutes=selectedTimeframeMinutes();
-        predictionTargetStartMs=minutes>0?nextBoundary(System.currentTimeMillis(),minutes):0L;
-        captureAndAnalyze();
-    }
-
-    private void showInfoCard(){
-        if(wm==null)return;
-        if(signalCardManualCloseOnly && signalCard!=null)return;
-        infoCardPinned=true;
-        if(signalCard!=null){
-            try{wm.removeView(signalCard);}catch(Exception ignored){}
-            signalCard=null;
-        }
-
-        int horizon=Math.max(1,selectedTimeframeMinutes());
-        LinearLayout card=new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16),dp(12),dp(16),dp(12));
-        GradientDrawable bg=new GradientDrawable();
-        bg.setColor(Color.argb(247,11,18,32));
-        bg.setCornerRadius(dp(18));
-        bg.setStroke(dp(2),Color.rgb(34,211,238));
-        card.setBackground(bg);
-
-        TextView title=new TextView(this);
-        title.setText("AZ SCANNER INFORMATION");
-        title.setTextSize(19); title.setTypeface(null,Typeface.BOLD);
-        title.setTextColor(Color.rgb(34,211,238));
-        card.addView(title);
-
-        TextView details=new TextView(this);
-        details.setTextSize(13); details.setTextColor(Color.WHITE);
-        card.addView(details);
-        infoDetails=details;
-        refreshInfoCard(System.currentTimeMillis());
-
-        Button close=new Button(this);
-        close.setText("CLOSE"); close.setAllCaps(false);
-        card.addView(close,new LinearLayout.LayoutParams(-1,dp(46)));
-        close.setOnClickListener(v->{
-            infoCardPinned=false;
-            try{wm.removeView(card);}catch(Exception ignored){}
-            if(signalCard==card)signalCard=null;
-            if(infoDetails==details)infoDetails=null;
-        });
-
-        WindowManager.LayoutParams cp=new WindowManager.LayoutParams(
-                dp(300),WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-                PixelFormat.TRANSLUCENT);
-        cp.gravity=Gravity.CENTER_HORIZONTAL|Gravity.TOP; cp.y=dp(150);
-        try{wm.addView(card,cp);signalCard=card;signalCardManualCloseOnly=true;}catch(Exception ignored){}
-    }
-
-    private void refreshInfoCard(long now){
-        if(!infoCardPinned || infoDetails==null)return;
-        int horizon=Math.max(1,selectedTimeframeMinutes());
-        long next=nextBoundary(now,horizon);
-        String finalSignal=lastDirection.isEmpty()?"FINAL: waiting for completed candle"
-                :"FINAL: "+lastDirection+" "+lastDirectionPercent+"% â€¢ ENTRY "+clock(predictionTargetStartMs);
-        String live=lastLiveDirection.isEmpty()?lastLiveStatus
-                :"AI LIVE: "+lastLiveDirection+" "+lastLivePercent+"%";
-        infoDetails.setText(
-                "Chart: "+currentAsset()+" â€¢ M"+horizon+"\n"+
-                "Recommended trade: "+tradeDuration(horizon)+"\n"+
-                "Pattern Mode: strong confirmed patterns only\n\n"+
-                live+"\n"+
-                finalSignal+"\n"+
-                entryState(now,predictionTargetStartMs)+"\n"+
-                winRateText()+"\n\n"+
-                "NEXT CANDLE: "+clock(next)+" â€¢ "+countdown(next-now)+"\n"+
-                "LIVE analysis â€¢ FINAL = after candle close");
-    }
-
-    private String pressureLine(SignalResult r){
-        if(r==null || r.regime==null)return "";
-        String x=r.regime;
-        int i=x.indexOf("PRESSURE ");
-        if(i<0)return "";
-        int end=x.indexOf(" â€¢ ",i);
-        if(end<0)end=x.length();
-        String v=x.substring(i,end).trim();
-        return v.isEmpty()?"":"BUYER / SELLER "+v;
-    }
-
-    private void showQuickSignalCard(QuickDecisionEngine.Result quick,int horizon){
-        if(infoCardPinned)return;
-        if(quick==null || !quick.highChance || wm==null)return;
-        if(quick.score<70)return;
-        if(signalCardManualCloseOnly && signalCard!=null)return;
-        long slot=System.currentTimeMillis()/(Math.max(1,horizon)*60_000L);
-        String key=currentAsset()+"|M"+horizon+"|"+quick.label+"|"+slot;
-        if(key.equals(lastQuickPopupKey))return;
-        lastQuickPopupKey=key;
-
-        if(signalCard!=null){
-            try{wm.removeView(signalCard);}catch(Exception ignored){}
-            signalCard=null;
-        }
-        boolean buy="BUY".equals(quick.label);
-        int color=buy?Color.rgb(74,222,128):Color.rgb(248,113,113);
-        OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
-
-        LinearLayout card=new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16),dp(12),dp(16),dp(12));
-        GradientDrawable bg=new GradientDrawable();
-        bg.setColor(Color.argb(247,11,18,32));
-        bg.setCornerRadius(dp(18));
-        bg.setStroke(dp(3),color);
-        card.setBackground(bg);
-
-        TextView title=new TextView(this);
-        title.setText(confidenceTitle(quick.score)+" â€¢ "+quick.label+" "+quick.score+"%");
-        title.setTextSize(20); title.setTypeface(null,Typeface.BOLD); title.setTextColor(color);
-        card.addView(title);
-
-        TextView details=new TextView(this);
-        details.setText(currentAsset()+" â€¢ M"+horizon+" â€¢ TRADE "+tradeDuration(horizon)+"\n"+
-                quick.reason+"\n"+verified.summary()+"\nWait for completed-candle confirmation");
-        details.setTextSize(13); details.setTextColor(Color.WHITE);
-        card.addView(details);
-
-        Button close=new Button(this);
-        close.setText("CLOSE"); close.setAllCaps(false);
-        card.addView(close,new LinearLayout.LayoutParams(-1,dp(46)));
-        close.setOnClickListener(v->{
-            try{wm.removeView(card);}catch(Exception ignored){}
-            if(signalCard==card){signalCard=null;signalCardManualCloseOnly=false;}
-            cancelSignalNotification();
-        });
-
-        WindowManager.LayoutParams cp=new WindowManager.LayoutParams(
-                dp(300),WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-                PixelFormat.TRANSLUCENT);
-        cp.gravity=Gravity.CENTER_HORIZONTAL|Gravity.TOP; cp.y=dp(150);
-        try{wm.addView(card,cp);signalCard=card;signalCardManualCloseOnly=true;}catch(Exception ignored){}
-    }
-
-    private String shortSetup(SignalResult r){
-        if(r==null)return "MULTI-FACTOR CONFLUENCE";
-        String e=r.explanation==null?"":r.explanation;
-        String low=e.toLowerCase(Locale.US);
-        int a=low.indexOf("led by ");
-        if(a>=0){
-            int start=a+7;
-            int end=e.indexOf(';',start);
-            if(end<0)end=Math.min(e.length(),start+42);
-            String x=e.substring(start,end).trim();
-            if(!x.isEmpty())return x.toUpperCase(Locale.US);
-        }
-        if(r.structure!=null&&!r.structure.trim().isEmpty())return r.structure.toUpperCase(Locale.US);
-        return "MULTI-FACTOR CONFLUENCE";
-    }
-
-    /**
-     * Do not display a visually detected candle name when it disagrees with the
-     * newest chart pressure. Fixed-width screen sampling can occasionally split
-     * one wide candle into several coloured regions; this guard prevents those
-     * regions from being presented as a multi-candle pattern.
-     */
-    private String validatedBannerPattern(SignalResult r){
-        String pattern=shortSetup(r);
-        if(pattern==null || pattern.trim().isEmpty())return "NOT DETECTED";
-        String p=pattern.toUpperCase(Locale.US);
-        // Some expert summaries append a regime after the actual candle name.
-        // The banner now displays trend separately, so never present that suffix
-        // as if it were part of the detected pattern.
-        p=p.replaceFirst("^(?:MASTER GUIDE|REFERENCE|PATTERN)\\s*:\\s*","");
-        p=p.replaceAll("\\s*[â€¢|]\\s*(?:RANGE\\s*/\\s*MIXED|BULLISH(?:\\s*/\\s*EXTENDED)?|BEARISH(?:\\s*/\\s*EXTENDED)?)\\s*$","").trim();
-        CandleVision.BoardState state=lastAnalysis==null?null:lastAnalysis.boardState;
-        if(state==null)return p;
-
-        String mappedDirection=directionFromPattern(p);
-        boolean bullish="BUY".equals(mappedDirection);
-        boolean bearish="SELL".equals(mappedDirection);
-
-        double newestPressure=.36*state.sequenceBias+.24*state.momentum
-                +.16*state.lastDirection+.24*state.recentTwoDirection;
-        boolean newestBearish=state.recentTwoDirection<-.20 || state.lastDirection<-.38;
-        boolean newestBullish=state.recentTwoDirection>.20 || state.lastDirection>.38;
-        boolean conflicts=(bullish && (newestPressure<-.10 || newestBearish))
-                || (bearish && (newestPressure>.10 || newestBullish));
-        // Keep useful context visible without presenting an older setup as the
-        // latest completed-candle pattern. RECENT patterns are display-only and
-        // directionFromPattern deliberately prevents them from creating trades.
-        if(conflicts)return "RECENT "+p;
-
-        // Multi-candle names need meaningful agreement from the newest sequence;
-        // a single wide coloured candle must not masquerade as three candles.
-        boolean multi=p.contains("THREE WHITE SOLDIERS") || p.contains("THREE BLACK CROWS")
-                || p.contains("THREE BULLISH") || p.contains("THREE BEARISH");
-        if(multi && (Math.abs(state.sequenceBias)<.24
-                || (bullish && state.recentTwoDirection<=.08)
-                || (bearish && state.recentTwoDirection>=-.08)))return "NOT CONFIRMED";
-
-        // Reversal shapes need follow-through from more than one newest region.
-        // A lone opposite candle is labelled as awaiting confirmation instead of
-        // being advertised as a completed reversal setup.
-        boolean reversal=p.contains("HAMMER") || p.contains("SHOOTING STAR")
-                || p.contains("HANGING MAN") || p.contains("ENGULFING")
-                || p.contains("MORNING STAR") || p.contains("EVENING STAR")
-                || p.contains("PIERCING") || p.contains("DARK CLOUD")
-                || p.contains("TWEEZER") || p.contains("THREE INSIDE")
-                || p.contains("THREE OUTSIDE") || p.contains("DRAGONFLY DOJI")
-                || p.contains("GRAVESTONE DOJI");
-        if(reversal && ((bullish && state.recentTwoDirection<=.14)
-                || (bearish && state.recentTwoDirection>=-.14)))return "AWAITING CONFIRMATION";
-        return p;
-    }
-
-    /** Refresh pair/timeframe on every scan; some canvas brokers do not emit a
-     * reliable accessibility event when their asset dropdown changes. */
-    private boolean refreshDetectedContext(){
-        AccessibilityNodeInfo root=null;
-        try{
-            root=getRootInActiveWindow();
-            if(root==null)return false;
-            CharSequence rootPackage=root.getPackageName();
-            if(rootPackage!=null && getPackageName().contentEquals(rootPackage))return false;
-            String visible=collectVisibleText(root);
-            String symbol=detectSymbol(visible),timeframe=detectTimeframe(visible);
-            long now=System.currentTimeMillis();
-            SharedPreferences.Editor edit=prefs.edit();
-            if(symbol!=null&&!symbol.isEmpty()){
-                String previous=prefs.getString("detected_asset","");
-                if(!symbol.equals(previous)){
-                    if(training!=null)training.clearPending();
-                    if(boardLearner!=null)boardLearner.clearPending();
-                    if(learner!=null)learner.setAsset(symbol);
-                    if(selfDecision!=null)selfDecision.reset();
-                    if(quickDecision!=null)quickDecision.reset();
-                    lastAlertKey="";
-                }
-                edit.putString("detected_asset",symbol).putLong("detected_asset_time",now);
-            }
-            if(timeframe!=null&&!timeframe.isEmpty())edit.putString("detected_timeframe",timeframe)
-                    .putString("last_valid_timeframe",timeframe).putLong("detected_timeframe_time",now);
-            boolean verified=symbol!=null&&!symbol.isEmpty();
-            if(!verified){
-                // Never keep presenting or learning against a previously seen
-                // pair when the current broker screen cannot verify its symbol.
-                edit.remove("detected_asset").remove("detected_asset_time");
-                if(training!=null)training.clearPending();
-                if(boardLearner!=null)boardLearner.clearPending();
-                if(selfDecision!=null)selfDecision.reset();
-                if(quickDecision!=null)quickDecision.reset();
-                lastAlertKey="";
-            }
-            edit.apply();
-            return verified;
-        }catch(Exception ignored){}finally{
-            if(root!=null)try{root.recycle();}catch(Exception ignored){}
-        }
-        return false;
-    }
-
-    private void showPairNotVerified(){
-        main.post(()->{
-            if(!scannerEnabled())return;
-            showStatusOverlay("READY");
-            clearStrongSignalCard();
-            cancelSignalNotification();
-            if(quickDecision!=null)quickDecision.reset();
-            lastQuickPopupKey="";
-            if(statusText!=null){
-                statusText.setText("PAIR DETECTION ERROR â€” RESCAN REQUIRED");
-                statusText.setTextColor(Color.rgb(251,191,36));
-            }
-            if(liveText!=null){
-                liveText.setText("AI LIVE â€¢ PAIR DETECTION ERROR");
-                liveText.setTextColor(Color.rgb(251,191,36));
-            }
-            if(bannerMonitorEnabled()){
-                if(topInfoText==null)createTopInfoBar();
-                if(topInfoText!=null){
-                    topInfoText.setText("NEXT CANDLE: NO TRADE\n"+
-                            "PAIR MISMATCH â€” RESCAN REQUIRED\n"+
-                            "Keep the current broker pair name visible");
-                    topInfoText.setTextColor(Color.rgb(250,204,21));
-                }
-            }
-        });
-    }
-
-    private void showSignalCard(SignalResult r,int horizon,int c){
-        if(infoCardPinned)return;
-        if(wm==null)return;
-        if(signalCardManualCloseOnly && signalCard!=null)return;
-        if(signalCard!=null){
-            try{wm.removeView(signalCard);}catch(Exception ignored){}
-            signalCard=null;
-        }
-
-        LinearLayout card=new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16),dp(12),dp(16),dp(12));
-        GradientDrawable bg=new GradientDrawable();
-        bg.setColor(Color.argb(245,11,18,32));
-        bg.setCornerRadius(dp(18));
-        bg.setStroke(dp(2),c);
-        card.setBackground(bg);
-
-        TextView title=new TextView(this);
-        String signalTime=clock(predictionTargetStartMs);
-        int pct="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
-        OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
-        title.setText(confidenceTitle(pct)+" â€¢ "+r.label+"  "+pct+"%");
-        title.setTextSize(22);
-        title.setTypeface(null,Typeface.BOLD);
-        title.setTextColor(c);
-        card.addView(title);
-
-        int hi=Math.max(0,Math.min(4,horizon-1));
-        int recentN=learner.recentCount(hi);
-        String recent=recentN<5?"WIN RATE: LEARNING":("RECENT WIN RATE "+learner.recentAccuracyPct(hi)+"% ("+recentN+")");
-        TextView pair=new TextView(this);
-        String pressure=pressureLine(r);
-        pair.setText(currentAsset()+" â€¢ M"+horizon+" â€¢ TRADE "+tradeDuration(horizon)+"\n"+r.label+" ENTRY "+signalTime+"\n"+entryState(System.currentTimeMillis(),predictionTargetStartMs)+"\nSETUP: "+shortSetup(r)+(pressure.isEmpty()?"":"\n"+pressure)+"\n"+verified.summary()+"\n"+recent);
-        pair.setTextSize(13);
-        pair.setTextColor(Color.WHITE);
-        card.addView(pair);
-
-        LinearLayout actions=new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        Button open=new Button(this); open.setText("OPEN"); open.setAllCaps(false);
-        Button close=new Button(this); close.setText("CLOSE"); close.setAllCaps(false);
-        actions.addView(open,new LinearLayout.LayoutParams(0,dp(46),1));
-        actions.addView(close,new LinearLayout.LayoutParams(0,dp(46),1));
-        card.addView(actions);
-
-        open.setOnClickListener(v->{
-            Intent in=new Intent(this,MainActivity.class);
-            in.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            startActivity(in);
-        });
-        close.setOnClickListener(v->{
-            try{wm.removeView(card);}catch(Exception ignored){}
-            if(signalCard==card){signalCard=null;signalCardManualCloseOnly=false;}
-            cancelSignalNotification();
-        });
-
-        WindowManager.LayoutParams lp=new WindowManager.LayoutParams(
-                dp(275),WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-                PixelFormat.TRANSLUCENT);
-        lp.gravity=Gravity.CENTER_HORIZONTAL|Gravity.TOP;
-        lp.y=dp(170);
-        try{wm.addView(card,lp);signalCard=card;signalCardManualCloseOnly=true;}catch(Exception ignored){}
-    }
-
-    private void maybeNotify(SignalResult r,int horizon){
-        if(r==null || !("BUY".equals(r.label)||"SELL".equals(r.label)))return;
-        int pct="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
-        if(pct<70)return;
-        OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
-
-        // Show Medium Chance and stronger notifications. Sound remains
-        // independently controlled by the user's selected threshold.
-        int alertThreshold=Math.max(70,Math.min(90,
-                prefs==null?85:prefs.getInt("sound_alert_threshold",85)));
-        boolean soundEnabled=prefs==null || prefs.getBoolean("sound_alerts",true);
-        boolean playSound=soundEnabled && pct>=alertThreshold;
-
-        long now=System.currentTimeMillis();
-        long candleKey=predictionTargetStartMs>0L?predictionTargetStartMs:(now/60_000L)*60_000L;
-        String key=currentAsset()+"|"+r.label+"|M"+horizon+"|"+candleKey;
-        if(key.equals(lastAlertKey))return;
-        lastAlertKey=key; lastAlertAt=now;
-
-        lastNotifiedSignal=r;
-        lastNotifiedHorizon=horizon;
-
-        Intent showIntent=new Intent(this,SignalDismissReceiver.class);
-        showIntent.setAction("scanner.SHOW_SIGNAL");
-        PendingIntent open=PendingIntent.getBroadcast(this,21,showIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-
-        Intent closeIntent=new Intent(this,SignalDismissReceiver.class);
-        closeIntent.setAction("scanner.DISMISS_SIGNAL");
-        PendingIntent close=PendingIntent.getBroadcast(this,22,closeIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-
-        int icon="BUY".equals(r.label)?android.R.drawable.arrow_up_float:android.R.drawable.arrow_down_float;
-        Notification.Builder n=Build.VERSION.SDK_INT>=26
-                ?new Notification.Builder(this,playSound?SIGNAL_CH:SIGNAL_POPUP_CH)
-                :new Notification.Builder(this);
-        int hi=Math.max(0,Math.min(4,horizon-1));
-        int rn=learner.recentCount(hi);
-        String wr=rn<5?"WIN RATE LEARNING":("WIN RATE "+learner.recentAccuracyPct(hi)+"%");
-        String fullInfo=currentAsset()+" â€¢ M"+horizon+" â€¢ TRADE "+tradeDuration(horizon)+"\n"+
-                r.label+" ENTRY "+clock(predictionTargetStartMs)+" â€¢ "+entryState(now,predictionTargetStartMs)+"\n"+
-                "SETUP: "+shortSetup(r)+(pressureLine(r).isEmpty()?"":"\n"+pressureLine(r))+"\n"+verified.summary()+"\n"+wr;
-        n.setSmallIcon(icon)
-                .setContentTitle(confidenceTitle(pct)+" â€¢ "+r.label+" "+pct+"%")
-                .setContentText(currentAsset()+" â€¢ M"+horizon+" â€¢ "+wr)
-                .setStyle(new Notification.BigTextStyle().bigText(fullInfo))
-                .setAutoCancel(false)
-                .setOngoing(true)
-                .setContentIntent(open)
-                .setPriority(Notification.PRIORITY_HIGH)
-                .setCategory(Notification.CATEGORY_RECOMMENDATION)
-                .setOnlyAlertOnce(true)
-                .setDefaults(Build.VERSION.SDK_INT<26 && playSound
-                        ? (Notification.DEFAULT_SOUND|Notification.DEFAULT_VIBRATE) : 0)
-                .addAction(new Notification.Action.Builder(0,"OPEN",open).build())
-                .addAction(new Notification.Action.Builder(0,"CLOSE",close).build());
-        postNotification(n.build());
-    }
-
-    /** Live verified signals used to show only an overlay. Notify Android too. */
-    private void maybeNotifyQuick(QuickDecisionEngine.Result quick,int horizon,
-                                  OnlineLearner.Verification verified){
-        if(quick==null || !quick.highChance ||
-                !("BUY".equals(quick.label)||"SELL".equals(quick.label)))return;
-        int pct=quick.score;
-        if(pct<70)return;
-        int alertThreshold=Math.max(70,Math.min(90,
-                prefs==null?85:prefs.getInt("sound_alert_threshold",85)));
-        boolean soundEnabled=prefs==null || prefs.getBoolean("sound_alerts",true);
-        boolean playSound=soundEnabled && pct>=alertThreshold;
-        long now=System.currentTimeMillis();
-        long slot=now/(Math.max(1,horizon)*60_000L);
-        String key=currentAsset()+"|LIVE|"+quick.label+"|M"+horizon+"|"+slot;
-        if(key.equals(lastAlertKey))return;
-        lastAlertKey=key; lastAlertAt=now;
-
-        Intent openIntent=new Intent(this,MainActivity.class);
-        openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        PendingIntent open=PendingIntent.getActivity(this,31,openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-        Intent closeIntent=new Intent(this,SignalDismissReceiver.class);
-        closeIntent.setAction("scanner.DISMISS_SIGNAL");
-        PendingIntent close=PendingIntent.getBroadcast(this,32,closeIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-        int icon="BUY".equals(quick.label)?android.R.drawable.arrow_up_float:android.R.drawable.arrow_down_float;
-        Notification.Builder n=Build.VERSION.SDK_INT>=26
-                ?new Notification.Builder(this,playSound?SIGNAL_CH:SIGNAL_POPUP_CH)
-                :new Notification.Builder(this);
-        String details=currentAsset()+" â€¢ M"+horizon+" â€¢ TRADE "+tradeDuration(horizon)+"\n"+
-                quick.reason+"\n"+verified.summary()+"\nLive signal; confirm at candle close.";
-        n.setSmallIcon(icon)
-                .setContentTitle(confidenceTitle(pct)+" â€¢ "+quick.label+" "+pct+"%")
-                .setContentText(currentAsset()+" â€¢ M"+horizon+" â€¢ LIVE VERIFIED")
-                .setStyle(new Notification.BigTextStyle().bigText(details))
-                .setAutoCancel(false).setOngoing(true).setContentIntent(open)
-                .setPriority(Notification.PRIORITY_HIGH)
-                .setCategory(Notification.CATEGORY_RECOMMENDATION)
-                .setOnlyAlertOnce(true)
-                .setDefaults(Build.VERSION.SDK_INT<26 && playSound
-                        ?(Notification.DEFAULT_SOUND|Notification.DEFAULT_VIBRATE):0)
-                .addAction(new Notification.Action.Builder(0,"OPEN",open).build())
-                .addAction(new Notification.Action.Builder(0,"CLOSE",close).build());
-        postNotification(n.build());
-    }
-
-    private void postNotification(Notification notification){
-        if(Build.VERSION.SDK_INT>=33 &&
-                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
-                        !=android.content.pm.PackageManager.PERMISSION_GRANTED){
-            if(prefs!=null)prefs.edit().putString("notification_status","Permission required").apply();
-            return;
-        }
-        NotificationManager nm=getSystemService(NotificationManager.class);
-        if(nm==null || !nm.areNotificationsEnabled()){
-            if(prefs!=null)prefs.edit().putString("notification_status","Blocked in Android settings").apply();
-            return;
-        }
-        try{
-            nm.notify(SIGNAL_ID,notification);
-            if(prefs!=null)prefs.edit().putString("notification_status","Working").apply();
-        }catch(Exception e){
-            if(prefs!=null)prefs.edit().putString("notification_status","Error: "+e.getClass().getSimpleName()).apply();
-        }
-    }
-
-    public static boolean sendTestNotification(){
-        AutoSymbolAccessibilityService s=instance;
-        if(s==null)return false;
-        s.main.post(()->{
-            s.createNotificationChannel();
-            Intent openIntent=new Intent(s,MainActivity.class);
-            openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            PendingIntent open=PendingIntent.getActivity(s,41,openIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-            Notification.Builder b=Build.VERSION.SDK_INT>=26
-                    ?new Notification.Builder(s,SIGNAL_CH):new Notification.Builder(s);
-            b.setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle("AZ signal notifications are working")
-                    .setContentText("You will be notified when a verified BUY or SELL signal is ready.")
-                    .setStyle(new Notification.BigTextStyle().bigText(
-                            "Test successful. Keep Android notifications enabled and do not restrict CandleScanner battery use."))
-                    .setContentIntent(open).setAutoCancel(true)
-                    .setPriority(Notification.PRIORITY_HIGH);
-            s.postNotification(b.build());
-        });
-        return true;
-    }
-
-    private String tradeDuration(int horizon){
-        int minutes=Math.max(1,Math.min(5,horizon));
-        return (minutes*60)+"s";
-    }
-
-    private String confidenceTitle(int score){
-        if(score>=90)return "VERY HIGH CONFIDENCE";
-        if(score>=85)return "HIGH CHANCE";
-        if(score>=70)return "MEDIUM CHANCE";
-        return "NO TRADE";
-    }
-
-    public static void showLastSignalOverlay(){
-        AutoSymbolAccessibilityService s=instance;
-        if(s!=null)s.main.post(()->{
-            if(s.lastNotifiedSignal!=null){
-                int color="BUY".equals(s.lastNotifiedSignal.label)
-                        ?Color.rgb(74,222,128):Color.rgb(248,113,113);
-                s.showSignalCard(s.lastNotifiedSignal,s.lastNotifiedHorizon,color);
-            }
-        });
-    }
-
-    public static void dismissSignalOverlay(){
-        AutoSymbolAccessibilityService s=instance;
-        if(s!=null)s.main.post(()->{
-            s.infoCardPinned=false;
-            if(s.signalCard!=null){
-                try{s.wm.removeView(s.signalCard);}catch(Exception ignored){}
-                s.signalCard=null;
-                s.signalCardManualCloseOnly=false;
-            }
-            s.cancelSignalNotification();
-        });
-    }
-
-    private void cancelSignalNotification(){
-        try{getSystemService(NotificationManager.class).cancel(SIGNAL_ID);}catch(Exception ignored){}
-    }
-
-    private void createNotificationChannel(){
-        if(Build.VERSION.SDK_INT>=26){
-            NotificationChannel ch=new NotificationChannel(
-                    SIGNAL_CH,"High-confidence BUY / SELL sound alerts",NotificationManager.IMPORTANCE_HIGH);
-            ch.setDescription("Sound and vibration only when the completed-candle signal reaches the selected confidence threshold");
-            ch.enableVibration(true);
-            ch.setVibrationPattern(new long[]{0,180,90,220});
-            Uri sound=RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-            AudioAttributes attrs=new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build();
-            ch.setSound(sound,attrs);
-            NotificationManager nm=getSystemService(NotificationManager.class);
-            nm.createNotificationChannel(ch);
-
-            NotificationChannel popup=new NotificationChannel(
-                    SIGNAL_POPUP_CH,"Automatic BUY / SELL popups",NotificationManager.IMPORTANCE_HIGH);
-            popup.setDescription("Visible completed-candle BUY / SELL popups for confidence scores of 70% or higher");
-            popup.enableVibration(false);
-            popup.setSound(null,null);
-            nm.createNotificationChannel(popup);
-        }
-    }
-
-    private void updateSymbolText(){
-        if(symbolText==null)return;
-        String a=currentAsset();
-        String tf=currentTimeframeLabel();
-        String mode=prefs==null?"AUTO":prefs.getString("timeframe_mode","AUTO");
-        long tt=prefs==null?0L:prefs.getLong("detected_timeframe_time",0L);
-        boolean fallback="AUTO".equalsIgnoreCase(mode) &&
-                (tt==0L || System.currentTimeMillis()-tt>30*60_000L);
-        symbolText.setText(("AUTO_CHART".equals(a)?"AUTO chart":a)+" â€¢ "+tf+(fallback?" fallback":""));
-    }
-
-    private String currentTimeframeLabel(){
-        if(prefs==null)prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
-        String mode=prefs.getString("timeframe_mode","AUTO").toUpperCase(Locale.US);
-        if(!"AUTO".equals(mode))return mode;
-        String tf=prefs.getString("detected_timeframe","").toUpperCase(Locale.US);
-        long t=prefs.getLong("detected_timeframe_time",0L);
-        if(tf.matches("M[1-5]") && System.currentTimeMillis()-t<=30*60_000L)return tf;
-        String last=prefs.getString("last_valid_timeframe","M1").toUpperCase(Locale.US);
-        // AUTO must never silently stop. When a canvas-based broker hides its
-        // timeframe from Accessibility, keep scanning with the last known value;
-        // M1 is the explicit first-run fallback and is shown in the UI as fallback.
-        return last.matches("M[1-5]")?last:"M1";
-    }
-
-    private int selectedHorizonIndex(){
-        String tf=currentTimeframeLabel();
-        if(tf.matches("M[1-5]"))return tf.charAt(1)-'1';
-        return -1;
-    }
-
-    private String currentAsset(){
-        if(prefs==null)prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
-        String a=prefs.getString("detected_asset","").trim().toUpperCase(Locale.US);
-        long t=prefs.getLong("detected_asset_time",0L);
-        // Keep one learning identity stable during a normal trading session.
-        // A new detected symbol still replaces it immediately.
-        if(a.isEmpty()||System.currentTimeMillis()-t>60*60_000L)return "AUTO_CHART";
-        return a;
-    }
-
-    private void processLearningAtBoundary(long boundary,CandleVision.Analysis now,
-                                           int selectedH,SignalResult displayed){
-        if(now==null||!now.valid||now.detectedBins<8||selectedH<0||selectedH>4)return;
-        String asset=currentAsset();
-        learner.setAsset(asset);
-
-        List<TrainingStore.Pending> pending=training.load();
-        java.util.ArrayList<TrainingStore.Pending> keep=new java.util.ArrayList<>();
-        for(TrainingStore.Pending p:pending){
-            // Never mix symbols or timeframes. These records are normally cleared
-            // on chart changes, but the checks make the stored data robust to restarts.
-            if(!asset.equalsIgnoreCase(p.asset) || p.horizon!=selectedH){
-                if(p.dueAt>boundary)keep.add(p);
-                continue;
-            }
-
-            if(p.dueAt==boundary){
-                double delta=p.entryY-now.latestY; // screen Y falls when price rises
-                if(Math.abs(delta)>=0.0035){
-                    boolean up=delta>0;
-                    boolean predictedUp=p.displayedBuyP>=0.5;
-                    boolean correct=predictedUp==up;
-                    learner.update(p.horizon,p.rawBuyP,p.displayedBuyP,up);
-                    learner.updateSetup(p.horizon,p.setup,correct);
-                    training.appendResolved(p,now.latestY,up,correct);
-                    CommunityLearningSync.queueResolved(this,p,up,correct);
-                }
-                // Tiny/flat moves are deliberately left unlabelled rather than
-                // forcing a noisy win/loss from anti-aliased screen pixels.
-            }else if(p.dueAt>boundary){
-                keep.add(p);
-            }
-            // p.dueAt < boundary means the exact close was missed. Discard it;
-            // using a later candle would corrupt the learner.
-        }
-        training.save(keep);
-
-        int minutes=selectedH+1;
-        SignalResult base=now.horizons!=null && selectedH<now.horizons.length
-                ?now.horizons[selectedH]:null;
-        if(base!=null && displayed!=null){
-            // Store raw model probability for calibration, but the probability
-            // actually displayed by the Self-AI for win-rate accounting.
-            SignalResult sample=new SignalResult(
-                    displayed.label,displayed.strength,displayed.score,
-                    displayed.buyProbability,displayed.sellProbability,
-                    displayed.confidence,base.regime,base.rawBuyProbability,
-                    displayed.setupQuality,displayed.structure,displayed.explanation);
-            String learningMode=prefs.getBoolean("shadow_testing_mode",false)
-                    ?"SHADOW":(prefs.getBoolean("auto_pattern_signals",false)?"PATTERN":"SAFER");
-            training.addPrediction(boundary,asset,selectedH,minutes,now.latestY,sample,learningMode);
-        }
-    }
-
-    private void removeOverlays(){
-        if(wm!=null){
-            if(signalCard!=null){try{wm.removeView(signalCard);}catch(Exception ignored){}}
-            if(topInfoBar!=null){try{wm.removeView(topInfoBar);}catch(Exception ignored){}}
-            if(statusBox!=null){try{wm.removeView(statusBox);}catch(Exception ignored){}}
-        }
-        signalCard=null; signalCardManualCloseOnly=false; infoCardPinned=false; infoDetails=null; statusBox=null; statusText=null; symbolText=null; timingText=null; liveText=null;
-        topInfoBar=null; topInfoText=null; topInfoLp=null;
-    }
-
-    private String collectVisibleText(AccessibilityNodeInfo root){
-        StringBuilder out=new StringBuilder(2048);
-        ArrayDeque<AccessibilityNodeInfo> q=new ArrayDeque<>();
-        q.add(root); int visited=0;
-        while(!q.isEmpty()&&visited<1200){
-            AccessibilityNodeInfo n=q.removeFirst(); visited++;
-            CharSequence t=n.getText(),d=n.getContentDescription();
-            if(t!=null&&t.length()<=120)out.append(' ').append(t);
-            if(d!=null&&d.length()<=120)out.append(' ').append(d);
-            int count=n.getChildCount();
-            for(int i=0;i<count;i++){
-                AccessibilityNodeInfo child=n.getChild(i);
-                if(child!=null)q.addLast(child);
-            }
-            if(n!=root)n.recycle();
-        }
-        return out.toString();
-    }
-
-    static String detectSymbol(String text){
-        if(text==null)return null;
-        String u=text.toUpperCase(Locale.US).replace('\u00A0',' ')
-                .replace("ï¼","/").replace("â€“","-").replace("â€”","-");
-        Matcher named=NAMED_OTC.matcher(u);
-        if(named.find())return named.group(1).toUpperCase(Locale.US)+" OTC";
-
-        Matcher m=PAIR.matcher(u);
-        String best=null; int bestScore=Integer.MIN_VALUE;
-        while(m.find()){
-            String a=m.group(1).toUpperCase(Locale.US),b=m.group(2).toUpperCase(Locale.US);
-            if(a.equals(b))continue;
-            int s=Math.max(0,m.start()-24),e=Math.min(u.length(),m.end()+24);
-            boolean otc=u.substring(s,e).contains("OTC");
-            // Prefer an OTC-labelled selector and then the earliest visible
-            // occurrence. Broker headers are exposed before lower controls;
-            // choosing the last occurrence allowed hidden/stale selector text
-            // (or an old AZ overlay on some Android versions) to win.
-            int score=(otc?100000:0)-m.start();
-            if(score>=bestScore){bestScore=score;best=a+"/"+b+(otc?" OTC":"");}
-        }
-        return best;
-    }
-
-    static String detectTimeframe(String text){
-        if(text==null)return null;
-        String u=text.toUpperCase(Locale.US).replace('\u00A0',' ')
-                .replace("ï¼","/").replace("â€“","-").replace("â€”","-");
-        Matcher m=TF_M.matcher(u);
-        if(m.find())return "M"+m.group(1);
-
-        // Prefer values close to chart/time words when the broker exposes 1m/2 min style text.
-        Matcher n=TF_MIN.matcher(u);
-        while(n.find()){
-            int s=Math.max(0,n.start()-36),e=Math.min(u.length(),n.end()+36);
-            String around=u.substring(s,e);
-            if(around.contains("TIME")||around.contains("CHART")||around.contains("CANDLE")||
-                    around.contains("EXPIR")||around.contains("INTERVAL"))
-                return "M"+n.group(1);
-        }
-        return null;
-    }
-
-    private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
-}
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíß^yñ:-jZ.¶›­–)Þ³W6¶vR6öÒæW†×ÆRæfÆöF–æv6æFÆW66ææW#° ¦–×÷'BæG&ö–Bæ66W76–&–Æ—G—6W'f–6Rä66W76–&–Æ—G•6W'f–6S°¦–×÷'BæG&ö–Bææ–ÖF–öâäæ–ÖF÷%6WC°¦–×÷'BæG&ö–Bææ–ÖF–öâäö&¦V7Dæ–ÖF÷#°¦–×÷'BæG&ö–Bææ–ÖF–öâåfÇVTæ–ÖF÷#°¦–×÷'BæG&ö–Bæâ£°¦–×÷'BæG&ö–Bæ6öçFVçBâ£°¦–×÷'BæG&ö–Bæw&†–72â£°¦–×÷'BæG&ö–Bæw&†–72æG&v&ÆRäw&F–VçDG&v&ÆS°¦–×÷'BæG&ö–Bæ†&Gv&Rä†&Gv&T'VffW#°¦–×÷'BæG&ö–BæÖVF–äVF–ôGG&–'WFW3°¦–×÷'BæG&ö–BæÖVF–å&–æwFöæTÖævW#°¦–×÷'BæG&ö–BææWBåW&“°¦–×÷'BæG&ö–Bæ÷2â£°¦–×÷'BæG&ö–Bç&÷f–FW"å6WGF–æw3°¦–×÷'BæG&ö–Bçf–Wrâ£°¦–×÷'BæG&ö–Bçf–Wræ66W76–&–Æ—G’ä66W76–&–Æ—G”WfVçC°¦–×÷'BæG&ö–Bçf–Wræ66W76–&–Æ—G’ä66W76–&–Æ—G”æöFT–æfó°¦–×÷'BæG&ö–Bçv–FvWBâ£° ¦–×÷'B¦fçFW‡Bå6–×ÆTFFTf÷&ÖC°¦–×÷'B¦fçWF–ÂäFFS°¦–×÷'B¦fçWF–Âä'&”FWVS°¦–×÷'B¦fçWF–ÂäÆ—7C°¦–×÷'B¦fçWF–ÂäÆö6ÆS°¦–×÷'B¦fçWF–Âæ6öæ7W'&VçBäW†V7WF÷#°¦–×÷'B¦fçWF–Âç&VvW‚äÖF6†W#°¦–×÷'B¦fçWF–Âç&VvW‚åGFW&ã° ¢ò¢ ¢¢67&VVâ×6†&RÖg&VR'&ö¶W"6†'B66ææW"à¢ ¢¢æG&ö–B²66W76–&–Æ—G’67&VVç6†÷G2&RæÇ—¦VB–âÖVÖ÷'’â6ÖÆÀ¢¢E•Uô44U54”$”Ä•E•ôõdU$Ä’¢Æövò7F—2&÷fRF†R'&ö¶W"â6–væÂFWF–Ç0¢¢V"öæÇ’f÷"7FF—7F–6ÆÇ’fW&–f–VB6WGW2âF†R6W'f–6RæWfW"7F÷&W267&VVç6†÷G2÷"7&VFVçF–Ç2à¢¢ð§V&Æ–26Æ72WFõ7–Ö&öÄ66W76–&–Æ—G•6W'f–6RW‡FVæG266W76–&–Æ—G•6W'f–6R°¢&—fFR7FF–2f–æÂ7G&–ær45’Ò$UU'Ät%ÅU4GÄ¥—Ä4„gÄTGÄå¤GÄ4GÅ4tGÄ„´GÄ4ä‡Ä4å—Ä”å'Ä%$ÇÄÕ„çÄ4ÅÄ4õÅTçÄ%7Å¤'ÅE%—Å4T·Ääô·ÄD´·ÅÄçÄ…TgÄ5¤·ÄTGÅ4'Ä¤ôGÄ$„GÄµtGÅ'ÄôÕ'Ä”Å7ÅD„'Ä”E'ÄÕ•'Å…ÅdäGÄµ%wÅµ'Ä$EGÄTuÄÔGÅ$ôçÄ$tçÄ•4·Å%T'ÅT‡Äµ¥GÅU¥7ÄtTÇÄÔGÄ¤çÄÄµ'Äå'ÄätçÄ´U7Ät…2#°¢&—fFR7FF–2f–æÂ7G&–ær54UBÒ45’²'Å„WÅ„wÄ%D7ÄUD‡Å4ôÇÄ$ä"#°¢&—fFR7FF–2f–æÂGFW&â•"ÒGFW&âæ6ö×–ÆR‚"ƒö’’ƒóÂ´Õ£Ó•Ò’‚"²54UB²"•ÅÇ2¥²õÅÂÕó¥ÓõÅÇ2¢‚"²54UB²'ÅU4EB’ƒò´Õ£Ó•Ò’"“°¢òòV÷FW‚W‡÷6W2Öç’õD27'—Fò6VÆV7F÷'22gVÆÂ–ç7G'VÖVçBæÖR&F†W ¢òòF†â$4RõTõDR—"†f÷"W†×ÆRÂ$6&FæòõD2"’â¶VWF†—2Æ—7@¢òòW‡Æ–6—B6òVç&VÆFVB÷fW&Æ’÷7FGW2FW‡BVæF–ær–âõD26ææ÷B&R66WFV@¢òò2fW&–f–VB'&ö¶W"–ç7G'VÖVçBà¢&—fFR7FF–2f–æÂ7G&–æräÔTEôõD5ô54UBÐ¢òò7'—Fö7W'&Væ6–W2W‡÷6VB'’æÖR&F†W"F†â$4RõTõDRà¢$4$Dä÷Ä$•D4ô”çÄUD„U$UT×ÄÄ•DT4ô”çÅ$•ÄWÄDôtT4ô”çÅ4ôÄäÅôÄ´DõGÂ"°¢$dÄä4„WÄ4„”äÄ”ä·ÅôÅ”tôçÅE$ôçÅDôä4ô”çÄ$”ää4R4ô”çÄ$•D4ô”â44‡Â"°¢òò7Fö6·2à¢$ÄWÄ4•44÷Ä”åDTÇÄÔ4DôäÄBƒó¢u7Å2“÷ÄÔ”5$õ4ôeGÅd•¤U"ƒó¢”ä2“÷Â"°¢$U…„ôäÔô$”ÇÄU…„ôâÔô$”ÇÄÔ¤ôçÄÄ”$$Ä4•D”u$õUƒó¢”ä2“÷ÄÔUDÂ"°¢%DU4ÄÄåd”D”ÄtôôtÄWÄÅ„$UGÄäUDdÄ•‡Ä4ô4²ÒÓô4ôÄÂ"°¢òò6öÖÖöF—F–W2à¢$%$TåBô”ÇÅuD’5%TDRô”ÇÅ4”ÅdU'ÄtôÄGÄäEU$Ât7ÅÄÄD•TÒƒó¢5õB“÷Â"°¢%ÄD”åTÒƒó¢5õB“÷Â"°¢òò–æF–6W2â6Æ6‚f&–çG2&Ræ÷&ÖÆ—¦VB&Vf÷&RÖF6†–ærà¢$U2ó#Ãt%Ä42óCÄC3óôUU'ÄC3UU'ÄD¤“3ÄS3TUU'ÄSSóôUU"#°¢&—fFR7FF–2f–æÂGFW&âäÔTEôõD2ÒGFW&âæ6ö×–ÆR€¢"ƒö’’ƒóÂ´Õ£Ó•Ò’‚"²äÔTEôõD5ô54UB²"•ÅÇ2´õD2ƒò´Õ£Ó•Ò’"“°¢&—fFR7FF–2f–æÂGFW&âDeôÒÒGFW&âæ6ö×–ÆR‚"ƒö’’ƒóÂ´Õ£Ó•Ò”ÕÅÇ2¢…³ÓUÒ’ƒòÅÆB’"“°¢&—fFR7FF–2f–æÂGFW&âDeôÔ”âÒGFW&âæ6ö×–ÆR‚"ƒö’’ƒóÂÅÆB’…³ÓUÒ•ÅÇ2¢ƒó¤×ÄÔ”çÄÔ”å7ÄÔ”åUDWÄÔ”åUDU2’ƒò´Õ¥Ò’"“° ¢&—fFR7FF–2f–æÂ7G&–ær$Te3Ò'66ææW"#°¢&—fFR7FF–2f–æÂ7G&–ær4”täÅô4ƒÒ'G&FU÷6–væÅ÷6÷VæE÷c#"#°¢&—fFR7FF–2f–æÂ7G&–ær4”täÅõõUô4ƒÒ'G&FU÷6–væÅ÷÷W÷cc#°¢&—fFR7FF–2f–æÂ–çB4”täÅô”CÓSS°¢&—fFR7FF–2f–æÂÆöærõ5Eô4Äõ4Uõ44åôDTÄ•ôÕ3ÓcSÃ°¢&—fFR7FF–2f–æÂÆöærTåE%•õt”äDõuôÕ3ÓUóÃ°¢&—fFR7FF–2f–æÂÆöærUDõõ$UE%•ôÕ3ÓóSÃ°¢&—fFR7FF–2f–æÂÆöærÄ•dUõ$Te$U4…ôÕ3ÓóÃ°¢&—fFR7FF–2f–æÂÆöærÄ•dUô4EU$UôÔ”åôtôÕ3Ó“Ã°¢&—fFR7FF–2f–æÂÆöærÄ•dUô$õTäD%•ôuT$EôÕ3ÓóSÃ°¢&—fFR7FF–2föÆF–ÆRWFõ7–Ö&öÄ66W76–&–Æ—G•6W'f–6R–ç7Fæ6S° ¢&—fFRf–æÂ†æFÆW"Ö–ãÖæWr†æFÆW"„Æö÷W"ævWDÖ–äÆö÷W"‚’“°¢&—fFR&ööÆVâ66ä'W7“ÖfÇ6S°¢&—fFRv–æF÷tÖævW"vÓ°¢&—fFRÆ–æV$Æ–÷WB7FGW4&÷ƒ°¢&—fFRFW‡Ef–Wr7FGW5FW‡BÂ7–Ö&öÅFW‡BÂF–Ö–æuFW‡BÂÆ—fUFW‡BÂ–æfôFWF–Ç3°¢&—fFRÆ–æV$Æ–÷WB6–væÄ6&C°¢&—fFRÆ–æV$Æ–÷WBF÷–æfô&#°¢&—fFRFW‡Ef–WrF÷–æfõFW‡C°¢&—fFRv–æF÷tÖævW"äÆ–÷WE&×2F÷–æfôÇ°¢&—fFR&ööÆVâ–æfô6&E–ææVCÖfÇ6S°¢òò%U’õ4TÄÂ÷W&VÆöæw2FòF†RW6W"öæ6R6†÷vââ66ææW"&Vg&W6†W2Ö¢òòWFFRF†R&ææW"&V†–æB—BÂ'WBöæÇ’F†R÷W4Äõ4R7F–öâÖ’&VÖ÷fR—Bà¢&—fFR&ööÆVâ6–væÄ6&DÖçVÄ6Æ÷6TöæÇ“ÖfÇ6S°¢&—fFRöæÆ–æTÆV&æW"ÆV&æW#°¢&—fFRG&–æ–æu7F÷&RG&–æ–æs°¢&—fFRGFW&äÖöFTÆV&æ–æu7F÷&RGFW&äÆV&æ–æs°¢&—fFR'&ö¶W$&ö&DÆV&æW"&ö&DÆV&æW#°¢&—fFR6VÆdFV6—6–öäVæv–æR6VÆdFV6—6–öã°¢&—fFRV–6´FV6—6–öäVæv–æRV–6´FV6—6–öã°¢&—fFRÖ&¶WDFF6W'f–6RÖ&¶WDFF°¢&—fFRföÆF–ÆRFV6†æ–6ÄÖöFVÂä×VÇF’W‡FW&æÅFV6†æ–6Ã°¢&—fFRföÆF–ÆR7G&–ærW‡FW&æÄ76WCÒ"#°¢&—fFRföÆF–ÆR7G&–ærW‡FW&æÅ7FGW3Ò%tT"DDôdb#°¢&—fFRföÆF–ÆRÆöærW‡FW&æÅWFFVDCÓÃ°¢&—fFRföÆF–ÆR&ööÆVâW‡FW&æÄfWF6†–æsÖfÇ6S°¢&—fFR6†&VE&VfW&Væ6W2&Vg3°¢&—fFR6æFÆUf—6–öâäæÇ—6—2Æ7DæÇ—6—3°¢&—fFRÆöærÆ7DÆW'DCÓÃ°¢&—fFR7G&–ærÆ7DÆW'D¶W“Ò"#°¢&—fFR7G&–ærÆ7EV–6µ÷W¶W“Ò"#°¢&—fFR7G&–ærÆ7D7F—fU6¶vSÒ"#°¢&—fFRÆöærÆ7DWFô&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢&—fFR–çB66†VGVÆVEF–ÖVg&ÖTÖ–çWFW3ÒÓ°¢&—fFRÆöær&VF–7F–öåF&vWE7F'D×3ÓÃ°¢&—fFRÆöær&W&VD&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢&—fFRÆöærVæF–æt&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢&—fFRÆöærÆ7D6GW&TGFV×DCÓÃ°¢&—fFRÆöærÆ7DÆ—fU&Vg&W6„CÓÃ°¢&—fFRÆöærÆ7E7V66W76gVÄWFõ66äCÓÃ°¢&—fFR–çBÆ7E67&VVç6†÷DW'&÷#Ó°¢&—fFR7G&–ærÆ7DF—&V7F–öãÒ"#°¢&—fFR–çBÆ7DF—&V7F–öåW&6VçCÓ°¢&—fFR–çBÆ7E6–væÄ†÷&—¦öãÓ°¢&—fFR–çBÆ7Ev–å&FSÒÓ°¢&—fFR–çBÆ7Ev–å&FU6×ÆW3Ó°¢&—fFR7G&–ærÆ7DÆ—fTF—&V7F–öãÒ"#°¢&—fFR–çBÆ7DÆ—fUW&6VçCÓ°¢&—fFR7G&–ærÆ7DÆ—fU7FGW3Ò$’Ä•dR(
+"7F'F–ær#°¢&—fFR6–væÅ&W7VÇBÆ7Dæ÷F–f–VE6–væÃ°¢&—fFR–çBÆ7Dæ÷F–f–VD†÷&—¦öãÓ° ¢&—fFRf–æÂ'Vææ&ÆR66åF–6³ÖæWr'Vææ&ÆR‚—°¢÷fW'&–FRV&Æ–2fö–B'Vâ‚—°¢–b‡66ææW$Væ&ÆVB‚’’6æFÆT6FVæ6UF–6²‚“°¢Ö–âç÷7DFVÆ–VB‡F†—2ÃÂ“°¢Ð¢Ó° ¢òòÆV&æ–ær—2–çFVçF–öæÆÇ’äõBF–ÖW"ÖG&—fVââÆ&VÇ2&R7&VFVB÷&W6öÇfV@¢òòöæÇ’g&öÒöff–6–Â÷7BÖ6Æ÷6R66ç2BW†7B6æFÆR&÷VæF&–W2à¢&—fFRf–æÂ'Vææ&ÆRÆV&åF–6³ÖæWr'Vææ&ÆR‚—°¢÷fW'&–FRV&Æ–2fö–B'Vâ‚—²ò¢&÷VæF'’ÖG&—fVâÆV&æ–æröæÇ’¢òÐ¢Ó° ¢÷fW'&–FR&÷FV7FVBfö–Böå6W'f–6T6öææV7FVB‚—°¢7WW"æöå6W'f–6T6öææV7FVB‚“°¢–ç7Fæ6S×F†—3°¢&Vg3ÖvWE6†&VE&VfW&Væ6W2…$Te2ÄÔôDUõ$•dDR“°¢ÆV&æW#ÖæWröæÆ–æTÆV&æW"‡F†—2“°¢G&–æ–æsÖæWrG&–æ–æu7F÷&R‡F†—2“°¢GFW&äÆV&æ–æsÖæWrGFW&äÖöFTÆV&æ–æu7F÷&R‡F†—2“°¢&ö&DÆV&æW#ÖæWr'&ö¶W$&ö&DÆV&æW"‡F†—2“°¢6VÆdFV6—6–öãÖæWr6VÆdFV6—6–öäVæv–æR‚“°¢V–6´FV6—6–öãÖæWrV–6´FV6—6–öäVæv–æR‚“°¢Ö&¶WDFFÖæWrÖ&¶WDFF6W'f–6R‚“°¢ÆV&æW"ç6WD76WB†7W'&VçD76WB‚’“°¢6öÖ×Væ—G”ÆV&æ–æu7–æ2ç&Vg&W6„æDfÇW6„7–æ2‡F†—2“°¢vÓÒ…v–æF÷tÖævW"–vWE7—7FVÕ6W'f–6R…t”äDõuõ4U%d”4R“°¢7&VFTæ÷F–f–6F–öä6†ææVÂ‚“°¢–b‡66ææW$Væ&ÆVB‚’’6†÷u7FGW4÷fW&Æ’‚%$TE’"“°¢&W6WD6FVæ6U66†VGVÆR‚“°¢Ö–âç&VÖ÷fT6ÆÆ&6·2‡66åF–6²“°¢Ö–âç&VÖ÷fT6ÆÆ&6·2†ÆV&åF–6²“°¢òòVæF–ær&V6÷&G2g&öÒöÆFW"÷F–ÖW"Ö&6VBfW'6–öç2&RVç6fRFò&W6öÇfRà¢G&–æ–æræ6ÆV%VæF–ær‚“°¢Ö–âç÷7B‡66åF–6²“°¢Ð ¢÷fW'&–FRV&Æ–2&ööÆVâöåVæ&–æB„–çFVçB–çFVçB—°¢–ç7Fæ6SÖçVÆÃ°¢Ö–âç&VÖ÷fT6ÆÆ&6·2‡66åF–6²“°¢Ö–âç&VÖ÷fT6ÆÆ&6·2†ÆV&åF–6²“°¢&VÖ÷fT÷fW&Æ—2‚“°¢&WGW&â7WW"æöåVæ&–æB†–çFVçB“°¢Ð ¢÷fW'&–FRV&Æ–2fö–BöäFW7G&÷’‚—°¢–ç7Fæ6SÖçVÆÃ°¢Ö–âç&VÖ÷fT6ÆÆ&6·2‡66åF–6²“°¢Ö–âç&VÖ÷fT6ÆÆ&6·2†ÆV&åF–6²“°¢&VÖ÷fT÷fW&Æ—2‚“°¢7WW"æöäFW7G&÷’‚“°¢Ð ¢÷fW'&–FRV&Æ–2fö–Böä66W76–&–Æ—G”WfVçB„66W76–&–Æ—G”WfVçBWfVçB—°¢G'—°¢–b†WfVçBÖçVÆÂbbWfVçBævWE6¶vTæÖR‚’ÖçVÆÂ—°¢7G&–ærWfVçE6¶vSÖWfVçBævWE6¶vTæÖR‚’çFõ7G&–ær‚“°¢òòæWfW"ÆV&â—"&6²g&öÒ¢w2÷vâ&ææW"ö6&BFW‡BâFö–æp¢òò6ò6âÖ¶R&Wf–÷W6Ç’6VÆV7FVB7–Ö&öÂÆöö²W&ÖæVçFÇ¢òò7W'&VçBgFW"F†R'&ö¶W"†26†ævVBFòæ÷F†W"76WBà¢–b†vWE6¶vTæÖR‚’æWVÇ2†WfVçE6¶vR’—&WGW&ã°¢Æ7D7F—fU6¶vSÖWfVçE6¶vS°¢Ð ¢66W76–&–Æ—G”æöFT–æfò&ö÷CÖvWE&ö÷D–ä7F—fUv–æF÷r‚“°¢–b‡&ö÷CÓÖçVÆÂ—&WGW&ã°¢7G&–ærf—6–&ÆSÖ6öÆÆV7Ef—6–&ÆUFW‡B‡&ö÷B“°¢&ö÷Bç&V7–6ÆR‚“°¢7G&–ær7–Ö&öÃÖFWFV7E7–Ö&öÂ‡f—6–&ÆR“°¢7G&–ærF–ÖVg&ÖSÖFWFV7EF–ÖVg&ÖR‡f—6–&ÆR“°¢Æöæræ÷sÕ7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚“° ¢6†&VE&VfW&Væ6W2äVF—F÷"VF—C×&Vg2æVF—B‚¢çWE7G&–ær‚&FWFV7FVE÷6¶vR"ÆÆ7D7F—fU6¶vR“°¢–b‡7–Ö&öÂÖçVÆÂbb7–Ö&öÂæ—4V×G’‚’—°¢7G&–ær&Wf–÷W3×&Vg2ævWE7G&–ær‚&FWFV7FVEö76WB"Â""“°¢–b‚7–Ö&öÂæWVÇ2‡&Wf–÷W2’—°¢G&–æ–æræ6ÆV%VæF–ær‚“°¢–b†&ö&DÆV&æW"ÖçVÆÂ–&ö&DÆV&æW"æ6ÆV%VæF–ær‚“°¢ÆV&æW"ç6WD76WB‡7–Ö&öÂ“°¢–b‡6VÆdFV6—6–öâÖçVÆÂ—6VÆdFV6—6–öâç&W6WB‚“°¢–b‡V–6´FV6—6–öâÖçVÆÂ—V–6´FV6—6–öâç&W6WB‚“°¢Æ7DÆW'D¶W“Ò"#°¢Ð¢VF—BçWE7G&–ær‚&FWFV7FVEö76WB"Ç7–Ö&öÂ¢çWDÆöær‚&FWFV7FVEö76WE÷F–ÖR"Ææ÷r“°¢Ð¢–b‡F–ÖVg&ÖRÖçVÆÂbbF–ÖVg&ÖRæ—4V×G’‚’¢VF—BçWE7G&–ær‚&FWFV7FVE÷F–ÖVg&ÖR"ÇF–ÖVg&ÖR¢çWE7G&–ær‚&Æ7E÷fÆ–E÷F–ÖVg&ÖR"ÇF–ÖVg&ÖR¢çWDÆöær‚&FWFV7FVE÷F–ÖVg&ÖU÷F–ÖR"Ææ÷r“°¢VF—BæÇ’‚“°¢WFFU7–Ö&öÅFW‡B‚“°¢Ö6F6‚„W†6WF–öâ–væ÷&VB—·Ð¢Ð ¢÷fW'&–FRV&Æ–2fö–Böä–çFW''WB‚—·Ð ¢V&Æ–27FF–2&ööÆVâ—46öææV7FVB‚—²&WGW&â–ç7Fæ6RÖçVÆÃ²Ð ¢V&Æ–27FF–2fö–B6WE66ææW$Væ&ÆVB„6öçFW‡B2Æ&ööÆVâVæ&ÆVB—°¢2ævWE6†&VE&VfW&Væ6W2…$Te2ÄÔôDUõ$•dDR’æVF—B‚’çWD&ööÆVâ‚'66ææW%öVæ&ÆVB"ÆVæ&ÆVB’æÇ’‚“°¢WFõ7–Ö&öÄ66W76–&–Æ—G•6W'f–6R3Ö–ç7Fæ6S°¢–b‡2ÖçVÆÂ—°¢–b†Væ&ÆVB—°¢2ç&W6WD6FVæ6U66†VGVÆR‚“°¢2ç6†÷u7FGW4÷fW&Æ’‚%$TE’"“°¢2æÖ–âç&VÖ÷fT6ÆÆ&6·2‡2ç66åF–6²“°¢2æÖ–âç÷7B‡2ç66åF–6²“°¢ÖVÇ6W°¢2ç&W6WD6FVæ6U66†VGVÆR‚“°¢–b‡2çG&–æ–ærÖçVÆÂ—2çG&–æ–æræ6ÆV%VæF–ær‚“°¢–b‡2æ&ö&DÆV&æW"ÖçVÆÂ—2æ&ö&DÆV&æW"æ6ÆV%VæF–ær‚“°¢2ç&VÖ÷fT÷fW&Æ—2‚“°¢2æÖ–âç&VÖ÷fT6ÆÆ&6·2‡2ç66åF–6²“°¢2æ6æ6VÅ6–væÄæ÷F–f–6F–öâ‚“°¢Ð¢Ð¢Ð ¢V&Æ–27FF–2fö–B6WD&ææW$Ööæ—F÷$Væ&ÆVB„6öçFW‡B2Æ&ööÆVâVæ&ÆVB—°¢2ævWE6†&VE&VfW&Væ6W2…$Te2ÄÔôDUõ$•dDR’æVF—B‚¢çWD&ööÆVâ‚&&ææW%öÖöæ—F÷%öVæ&ÆVB"ÆVæ&ÆVB’æÇ’‚“°¢WFõ7–Ö&öÄ66W76–&–Æ—G•6W'f–6R3Ö–ç7Fæ6S°¢–b‡3ÓÖçVÆÂ—&WGW&ã°¢2æÖ–âç÷7B‚‚’Óç°¢–b†Væ&ÆVBbb2ç66ææW$Væ&ÆVB‚’—°¢2æ7&VFUF÷–æfô&"‚“°¢–b‡2çF÷–æfô&"ÖçVÆÂ—2çF÷–æfô&"ç6WEf—6–&–Æ—G’…f–Wråd•4”$ÄR“°¢ÖVÇ6W°¢2ç&VÖ÷fUF÷–æfô&"‚“°¢Ð¢Ò“°¢Ð ¢&—fFR&ööÆVâ&ææW$Ööæ—F÷$Væ&ÆVB‚—°¢–b‡&Vg3ÓÖçVÆÂ—&Vg3ÖvWE6†&VE&VfW&Væ6W2…$Te2ÄÔôDUõ$•dDR“°¢&WGW&â&Vg2ævWD&ööÆVâ‚&&ææW%öÖöæ—F÷%öVæ&ÆVB"ÇG'VR“°¢Ð ¢&—fFR&ööÆVâ66ææW$Væ&ÆVB‚—°¢–b‡&Vg3ÓÖçVÆÂ—&Vg3ÖvWE6†&VE&VfW&Væ6W2…$Te2ÄÔôDUõ$•dDR“°¢&WGW&â&Vg2ævWD&ööÆVâ‚'66ææW%öVæ&ÆVB"ÆfÇ6R“°¢Ð ¢&—fFRfö–B&W6WD6FVæ6U66†VGVÆR‚—°¢66†VGVÆVEF–ÖVg&ÖTÖ–çWFW3ÒÓ°¢Æ7DWFô&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢&VF–7F–öåF&vWE7F'D×3ÓÃ°¢&W&VD&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢VæF–æt&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢Æ7D6GW&TGFV×DCÓÃ°¢Æ7DÆ—fU&Vg&W6„CÓÃ°¢–b‡6VÆdFV6—6–öâÖçVÆÂ—6VÆdFV6—6–öâç&W6WB‚“°¢Æ7E7V66W76gVÄWFõ66äCÓÃ°¢Æ7E67&VVç6†÷DW'&÷#Ó°¢Æ7DF—&V7F–öãÒ"#°¢Æ7DF—&V7F–öåW&6VçCÓ°¢Æ7E6–væÄ†÷&—¦öãÓ°¢Æ7Ev–å&FSÒÓ°¢Æ7Ev–å&FU6×ÆW3Ó°¢Ð ¢ò¢ ¢¢6ö×ÆWFVBÖ6æFÆRæW‡BÖVçG'’ÖöFRâF†R66ææW"v—G2VçF–ÂF†R'&ö¶W"ÖÆ–væV@¢¢6æFÆR†27GVÆÇ’6Æ÷6VBÂW6W2'&–VfÇ’6òF†R6†'B6â&VæFW"F†B6Æ÷6RÀ¢¢æBöæÇ’F†Vâ6GW&W2öæÇ—¦W2F†R6†'Bf÷"F†RæWvÇ’÷VæVB6æFÆRà¢ ¢¢F†—2—2–çFVçF–öæÆÇ’F–ffW&VçBg&öÒ&RÖVçG'’&VF–7F–öã¢F†R§W7BÖf–æ—6†V@¢¢6æFÆR—2æWfW"wVW76VB&Vf÷&R—B6Æ÷6W2â6ÖÆÂ÷7BÖ6Æ÷6R&ö6W76–ærFVÆ¢¢—2Væfö–F&ÆR&V6W6RF†R6ö×ÆWFVB6æFÆR×W7BW†—7B&Vf÷&R—B6â&R&VBà¢¢ð¢&—fFRfö–B6æFÆT6FVæ6UF–6²‚—°¢–çBÖ–çWFW3×6VÆV7FVEF–ÖVg&ÖTÖ–çWFW2‚“°¢Æöæræ÷sÕ7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚“°¢–b†Ö–çWFW3ÃÓ—°¢66†VGVÆVEF–ÖVg&ÖTÖ–çWFW3ÒÓ°¢Æ7DWFô&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢&W&VD&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢WFFUF–Ö–æuFW‡B†æ÷rÃÂ“°¢Ö–&TÆ—fU&Vg&W6‚†æ÷rÃÂÃÂ“°¢&WGW&ã°¢Ð ¢Æöær–çFW'fÃÖÖ–çWFW2£cóÃ°¢Æöær7W'&VçD&÷VæF'“Ò†æ÷rö–çFW'fÂ’¦–çFW'fÃ°¢ÆöæræW‡D&÷VæF'“Ö7W'&VçD&÷VæF'’¶–çFW'fÃ° ¢–b‡66†VGVÆVEF–ÖVg&ÖTÖ–çWFW2ÖÖ–çWFW2—°¢–b‡66†VGVÆVEF–ÖVg&ÖTÖ–çWFW2ÒÓbbG&–æ–ærÖçVÆÂ—G&–æ–æræ6ÆV%VæF–ær‚“°¢66†VGVÆVEF–ÖVg&ÖTÖ–çWFW3ÖÖ–çWFW3°¢òòFòæ÷BÆö6²âöff–6–Â6–væÂg&öÒ&æFöÒ'F–ÆÇ’Ö6ö×ÆWFV@¢òò6æFÆRöâ7F'GWâÆ—fR’&Vg&W6‚6â'VâÂ'WBF†Rf—'7Böff–6–À¢òòæW‡BÖ6æFÆRFV6—6–öâv—G2f÷"F†RæW‡B&VÂ6Æ÷6Rà¢Æ7DWFô&÷VæF'”×3Ö7W'&VçD&÷VæF'“°¢&W&VD&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢VæF–æt&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢Ð ¢–b†7W'&VçD&÷VæF'“æÆ7DWFô&÷VæF'”×2bb&W&VD&÷VæF'”×2Ö7W'&VçD&÷VæF'’—°¢Æöær6–æ6T6Æ÷6SÖæ÷rÖ7W'&VçD&÷VæF'“°¢–b‡6–æ6T6Æ÷6SãÕõ5Eô4Äõ4Uõ44åôDTÄ•ôÕ2bb66ä'W7’b`¢æ÷rÖÆ7D6GW&TGFV×DCãÔÄ•dUô4EU$UôÔ”åôtôÕ2—°¢&VF–7F–öåF&vWE7F'D×3Ö7W'&VçD&÷VæF'“°¢VæF–æt&÷VæF'”×3Ö7W'&VçD&÷VæF'“°¢6GW&TæDæÇ—¦R‡G'VRÆ7W'&VçD&÷VæF'’ÆfÇ6R“°¢Ð¢Ð ¢òòÖ&²F†R&÷VæF'’6öç7VÖVBöæÇ’gFW"fÆ–B67&VVç6†÷Bv2æÇ—¦VBà¢òòf–ÆVB67&VVç6†÷G2&VÖ–âVÆ–v–&ÆRf÷"&WG'’öâF†RföÆÆ÷v–ærF–6²à¢–b‡&W&VD&÷VæF'”×3ÓÖ7W'&VçD&÷VæF'’’Æ7DWFô&÷VæF'”×3Ö7W'&VçD&÷VæF'“° ¢òòWfW'’×6V6öæBf—7VÂ&Vg&W6‚â7W&W72—B§W7B&Vf÷&RögFW"6æFÆP¢òò&÷VæF'’6òæG&ö–Bw267&VVç6†÷B&FRÆ–Ö—B6ææ÷B7FVÂF†Röff–6–À¢òò6ö×ÆWFVBÖ6æFÆR6GW&Rà¢Ö–&TÆ—fU&Vg&W6‚†æ÷rÆ7W'&VçD&÷VæF'’ÆæW‡D&÷VæF'’“°¢WFFUF–Ö–æuFW‡B†æ÷rÆæW‡D&÷VæF'’“°¢Ð ¢&—fFRfö–BÖ–&TÆ—fU&Vg&W6‚†Æöæræ÷rÆÆöær7W'&VçD&÷VæF'’ÆÆöæræW‡D&÷VæF'’—°¢–b‡66ä'W7’ÇÂ66ææW$Væ&ÆVB‚’—&WGW&ã°¢–b†æ÷rÖÆ7DÆ—fU&Vg&W6„CÄÄ•dUõ$Te$U4…ôÕ2—&WGW&ã°¢–b†æ÷rÖÆ7D6GW&TGFV×DCÄÄ•dUô4EU$UôÔ”åôtôÕ2—&WGW&ã° ¢–b†æW‡D&÷VæF'“ãÂ—°¢ÆöærVçF–ÃÖæW‡D&÷VæF'’Öæ÷s°¢Æöær6–æ6SÖæ÷rÖ7W'&VçD&÷VæF'“°¢–b‡VçF–ÃãÓÂbbVçF–ÃÃÔÄ•dUô$õTäD%•ôuT$EôÕ2—&WGW&ã°¢–b‡6–æ6SãÓÂbb6–æ6SÃÕõ5Eô4Äõ4Uõ44åôDTÄ•ôÕ2³sSÂ—&WGW&ã°¢Ð ¢Æ7DÆ—fU&Vg&W6„CÖæ÷s°¢6GW&TæDæÇ—¦R†fÇ6RÃÂÇG'VR“°¢Ð ¢&—fFR–çB6VÆV7FVEF–ÖVg&ÖTÖ–çWFW2‚—°¢7G&–ærFcÖ7W'&VçEF–ÖVg&ÖTÆ&VÂ‚“°¢–b‡FbæÖF6†W2‚$Õ³ÓUÒ"’’&WGW&âFbæ6†$Bƒ’Òss°¢&WGW&âÓ°¢Ð ¢&—fFRÆöæræW‡D&÷VæF'’†Æöæræ÷rÆ–çBÖ–çWFW2—°¢–b†Ö–çWFW3ÃÓ—&WGW&âÃ°¢Æöær–çFW'fÃÖÖ–çWFW2£cóÃ°¢&WGW&â‚†æ÷rö–çFW'fÂ’³Â’¦–çFW'fÃ°¢Ð ¢&—fFR7G&–ær6Æö6²†Æöærv†Vâ—°¢–b‡v†VãÃÓÂ—&WGW&â"ÒÓ¢ÒÓ¢ÒÒ#°¢&WGW&âæWr6–×ÆTFFTf÷&ÖB‚$„ƒ¦ÖÓ§72"ÄÆö6ÆRævWDFVfVÇB‚’’æf÷&ÖB†æWrFFR‡v†Vâ’“°¢Ð ¢&—fFR7G&–ær6÷VçFF÷vâ†ÆöærÖ–ÆÆ—2—°¢Æöær6V3ÔÖF‚æÖ‚ƒÂÂ†Ö–ÆÆ—2³““”Â’óÂ“°¢Æöærƒ×6V2ó3cÃ²6V2SÓ3cÃ°¢ÆöærÓ×6V2ócÂÂ3×6V2ScÃ°¢&WGW&âƒãõ7G&–æræf÷&ÖB„Æö6ÆRævWDFVfVÇB‚’Â"VC¢S&C¢S&B"Æ‚ÆÒÇ2¢¥7G&–æræf÷&ÖB„Æö6ÆRævWDFVfVÇB‚’Â"S&C¢S&B"ÆÒÇ2“°¢Ð ¢&—fFR7G&–ærVçG'•7FFR†Æöæræ÷rÆÆöærF&vWB—°¢–b‡F&vWCÃÓÂ—&WGW&â$TåE%’D”ÔRTä´äõtâ#°¢–b†æ÷sÇF&vWB—&WGW&â$TåE%’”â"¶6÷VçFF÷vâ‡F&vWBÖæ÷r“°¢ÆöærÆFSÖæ÷r×F&vWC°¢–b†ÆFSÃÔTåE%•õt”äDõuôÕ2—&WGW&â$TåE%’äõr(
+"£#°¢&WGW&â$ÄDR#°¢Ð ¢&—fFR7G&–ærv–å&FUFW‡B‚—°¢–b†Æ7Ev–å&FU6×ÆW3ÃRÇÂÆ7Ev–å&FSÃ¢&WGW&â%t”â$DS¢ÄT$ä”är"²†Æ7Ev–å&FU6×ÆW3ãò"‚"¶Æ7Ev–å&FU6×ÆW2²"’#¢""“°¢&WGW&â%$T4TåBt”â$DR"¶Æ7Ev–å&FR²"R‚"¶Æ7Ev–å&FU6×ÆW2²"’#°¢Ð ¢&—fFRfö–B&Vg&W6…6–væÄF—7Æ’†Æöæræ÷r—°¢–b‡7FGW5FW‡CÓÖçVÆÂÇÂÆ7DF—&V7F–öâæ—4V×G’‚’—&WGW&ã°¢7G&–ærVçG'“ÖÆ7DF—&V7F–öâ²"TåE%’"¶6Æö6²‡&VF–7F–öåF&vWE7F'D×2“°¢7FGW5FW‡Bç6WEFW‡B†Æ7DF—&V7F–öâ²""¶Æ7DF—&V7F–öåW&6VçB²"UÆâ"¶VçG'’²%Æâ"¶VçG'•7FFR†æ÷rÇ&VF–7F–öåF&vWE7F'D×2’²%Æâ"·v–å&FUFW‡B‚’“°¢7FGW5FW‡Bç6WEFW‡D6öÆ÷"‚$%U’"æWVÇ2†Æ7DF—&V7F–öâ“ô6öÆ÷"ç&v"ƒ3BÃ#3’Ãs"“¤6öÆ÷"ç&v"ƒ#S"ÃcRÃcR’“°¢Ð ¢&—fFRfö–BWFFUF–Ö–æuFW‡B†Æöæræ÷rÆÆöæræW‡D&÷VæF'’—°¢Ö–âç÷7B‚‚’Óç°¢&Vg&W6…6–væÄF—7Æ’†æ÷r“°¢&Vg&W6„–æfô6&B†æ÷r“°¢–b‡F–Ö–æuFW‡CÓÖçVÆÂ—&WGW&ã°¢–b†æW‡D&÷VæF'“ÃÓÂ—°¢F–Ö–æuFW‡Bç6WEFW‡B‚$6æFÆRF–ÖRVæf–Æ&ÆR"“°¢ÖVÇ6R–b‡&VF–7F–öåF&vWE7F'D×3ãÂbbæ÷sÃ×&VF–7F–öåF&vWE7F'D×2´TåE%•õt”äDõuôÕ2—°¢F–Ö–æuFW‡Bç6WEFW‡B‚$Ò"´ÖF‚æÖ‚ƒÆÆ7E6–væÄ†÷&—¦öâ’²"(
+"F&vWB6æFÆR"¶6Æö6²‡&VF–7F–öåF&vWE7F'D×2’“°¢ÖVÇ6W°¢F–Ö–æuFW‡Bç6WEFW‡B‚$æW‡BVçG'’6æFÆR"¶6Æö6²†æW‡D&÷VæF'’’²"(
+""¶6÷VçFF÷vâ†æW‡D&÷VæF'’Öæ÷r’“°¢Ð¢Ò“°¢Ð ¢&—fFRfö–B6GW&TæDæÇ—¦R‚—°¢6GW&TæDæÇ—¦R†fÇ6RÇ&VF–7F–öåF&vWE7F'D×2ÆfÇ6R“°¢Ð ¢&—fFRfö–B6GW&TæDæÇ—¦R†&ööÆVâWFöÖF–2ÆÆöærF&vWD&÷VæF'’Æ&ööÆVâÆ—fU&Vg&W6‚—°¢–b„'V–ÆBådU%4”ôâå4Dµô”åCÃ3ÇÇ66ä'W7—ÇÂ66ææW$Væ&ÆVB‚’—&WGW&ã°¢66ä'W7“×G'VS°¢Æ7D6GW&TGFV×DCÕ7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚“°¢W†V7WF÷"WƒÖvWDÖ–äW†V7WF÷"‚“°¢F¶U67&VVç6†÷D6ÆÆ&6²6#ÖæWrF¶U67&VVç6†÷D6ÆÆ&6²‚—°¢÷fW'&–FRV&Æ–2fö–Böå7V66W72…67&VVç6†÷E&W7VÇB67&VVç6†÷B—°¢&—FÖ6ögGv&SÖçVÆÃ°¢†&Gv&T'VffW"†#ÖçVÆÃ°¢&ööÆVâfÆ–CÖfÇ6S°¢G'—°¢†#×67&VVç6†÷BævWD†&Gv&T'VffW"‚“°¢&—FÖ‡sÔ&—FÖçw&†&Gv&T'VffW"††"Ç67&VVç6†÷BævWD6öÆ÷%76R‚’“°¢–b†‡rÖçVÆÂ—6ögGv&SÖ‡ræ6÷’„&—FÖä6öæf–rä$t%óƒƒƒ‚ÆfÇ6R“°¢–b‡6ögGv&RÖçVÆÂ’fÆ–CÖæÇ—¦T&—FÖ‡6ögGv&RÆÆ—fU&Vg&W6‚ÆWFöÖF–2ÇF&vWD&÷VæF'’“°¢VÇ6R6†÷uVæf–Æ&ÆR‚$äòe$ÔR(
+"UDò$UE%’"“°¢Ö6F6‚„W†6WF–öâR—°¢6†÷uVæf–Æ&ÆR‚%44â$UE%’"“°¢Öf–æÆÇ—°¢–b‡6ögGv&RÖçVÆÂbb6ögGv&Ræ—5&V7–6ÆVB‚’—6ögGv&Rç&V7–6ÆR‚“°¢–b††"ÖçVÆÂ–†"æ6Æ÷6R‚“°¢66ä'W7“ÖfÇ6S°¢–b†WFöÖF–2bbfÆ–B—°¢&W&VD&÷VæF'”×3×F&vWD&÷VæF'“°¢Æ7DWFô&÷VæF'”×3×F&vWD&÷VæF'“°¢VæF–æt&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢Æ7E7V66W76gVÄWFõ66äCÕ7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚“°¢Æ7E67&VVç6†÷DW'&÷#Ó°¢–b‡&Vg2ÖçVÆÂ—&Vg2æVF—B‚’çWDÆöær‚&Æ7E÷7V66W76gVÅ÷66åöB"Å7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚’’æÇ’‚“°¢ÖVÇ6R–b†WFöÖF–2—°¢VæF–æt&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢Ð¢Ð¢Ð¢÷fW'&–FRV&Æ–2fö–Böäf–ÇW&R†–çBW'&÷$6öFR—°¢66ä'W7“ÖfÇ6S°¢Æ7E67&VVç6†÷DW'&÷#ÖW'&÷$6öFS°¢–b†WFöÖF–2—VæF–æt&÷VæF'”×3ÔÆöæräÔ”åõdÅTS°¢–b†W'&÷$6öFSÓÔU%$õ%õD´Uõ45$TTå4„õEô”åDU%dÅõD”ÔUõ4„õ%B—°¢òòF†R×6V6öæB†V'F&VB&WG&–W2WFöÖF–6ÆÇ’à¢&WGW&ã°¢Ð¢–b†Æ—fU&Vg&W6‚—&WGW&ã°¢–b„'V–ÆBådU%4”ôâå4Dµô”åCãÓ3BbbW'&÷$6öFSÓÔU%$õ%õD´Uõ45$TTå4„õEõ4T5U$Uõt”äDõr¢6†÷uVæf–Æ&ÆR‚$%$ô´U"$Äô4µ245$TTâ4EU$R"“°¢VÇ6R–b†W'&÷$6öFSÓÔU%$õ%õD´Uõ45$TTå4„õEôäõô44U54”$”Ä•E•ô44U52¢6†÷uVæf–Æ&ÆR‚$44U54”$”Ä•E’ôdb"“°¢VÇ6R6†÷uVæf–Æ&ÆR‚$UDò44â$UE%’"“°¢Ð¢Ó° ¢òòæG&ö–BB²6â6GW&R§W7BF†R7F—fR'&ö¶W"v–æF÷râF†—2fö–G2÷W ¢òò66W76–&–Æ—G’÷fW&Æ’&V–ær–æ6ÇVFVB–âF†R6æFÆR–ÖvRâfÆÂ&6²Fð¢òòF†RgVÆÂF—7Æ’öâæG&ö–BÓ2÷"v†Vâæò7F—fRv–æF÷r—2f–Æ&ÆRà¢–b„'V–ÆBådU%4”ôâå4Dµô”åCãÓ3B—°¢66W76–&–Æ—G”æöFT–æfò&ö÷CÖçVÆÃ°¢G'—°¢&ö÷CÖvWE&ö÷D–ä7F—fUv–æF÷r‚“°¢–b‡&ö÷BÖçVÆÂ—°¢–çBv–æF÷t–C×&ö÷BævWEv–æF÷t–B‚“°¢&ö÷Bç&V7–6ÆR‚“°¢&ö÷CÖçVÆÃ°¢F¶U67&VVç6†÷Döev–æF÷r‡v–æF÷t–BÆW‚Æ6"“°¢&WGW&ã°¢Ð¢Ö6F6‚„W†6WF–öâ–væ÷&VB—°¢Öf–æÆÇ—°¢–b‡&ö÷BÖçVÆÂ—G'—·&ö÷Bç&V7–6ÆR‚“·Ö6F6‚„W†6WF–öâ–væ÷&VB—·Ð¢Ð¢Ð¢F¶U67&VVç6†÷B„F—7Æ’äDTdTÅEôD•5Ä’ÆW‚Æ6"“°¢Ð ¢&—fFR6æFÆUf—6–öâäæÇ—6—2æÇ—¦Uv—F„WFô6Æ–'&F–öâ„&—FÖ"—°¢–çBF†VÖS×&Vg2ævWD–çB‚'F†VÖR"Ã’Â6Vç6—F—f—G“×&Vg2ævWD–çB‚'6Vç6—F—f—G’"Ã“°¢&ööÆVâ†–v„67W&7“×&Vg2ævWD&ööÆVâ‚&†–v…ö67W&7’"ÇG'VR“°¢–çB6fVDÃ×&Vg2ævWD–çB‚&ÆVgB"ÃR’Â6fVEC×&Vg2ævWD–çB‚'F÷"Ã‚“°¢–çB6fVE#×&Vg2ævWD–çB‚'&–v‡B"Ã“b’Â6fVD#×&Vg2ævWD–çB‚&&÷GFöÒ"Ãƒ“°¢&ööÆVâf÷&6S×&Vg2ævWD&ööÆVâ‚&f÷&6UöWFõö6Æ–'&F–öâ"ÆfÇ6R“°¢6æFÆUf—6–öâäæÇ—6—2&W7CÔ6æFÆUf—6–öâææÇ—¦R€¢"Ç6fVDÂÇ6fVEBÇ6fVE"Ç6fVD"ÇF†VÖRÇ6Vç6—F—f—G’ÆÆV&æW"Æ†–v„67W&7’“°¢–çB&W7E66÷&SÖ6Æ–'&F–öå66÷&R†&W7B“°¢–b‚f÷&6Rbb&W7E66÷&SãÓ‚—&WGW&â&W7C° ¢òò6æF–FFRv–æF÷w26÷fW"6öÖÖöâ÷'G&—B'&ö¶W"Æ–÷WG2â6æFÆUf—6–öà¢òò–æFWVæFVçFÇ’&VÖ÷fW2v–FR%U’õ4TÄÂ6öçG&öÇ2g&öÒF†R6†÷6Vâ&Vv–öâà¢–çEµÕµÒ6æF–FFW3×°¢³"Ã‚Ã“‚Ã“ÒÇ³2Ã"Ã“rÃƒgÒÇ³RÃ‚Ã“bÃƒÒÀ¢³bÃ#"Ã“RÃs‡ÒÇ³"ÃbÃ“‚ÃsgÒÇ³‚Ã"Ã“BÃƒ'Ð¢Ó°¢–çEµÒ6†÷6Vã×·6fVDÂÇ6fVEBÇ6fVE"Ç6fVD'Ó°¢f÷"†–çEµÒ&÷ƒ¦6æF–FFW2—°¢–b†&÷…³ÓÓ×6fVDÂbf&÷…³ÓÓ×6fVEBbf&÷…³%ÓÓ×6fVE"bf&÷…³5ÓÓ×6fVD"–6öçF–çVS°¢6æFÆUf—6–öâäæÇ—6—2G&–ÃÔ6æFÆUf—6–öâææÇ—¦R€¢"Æ&÷…³ÒÆ&÷…³ÒÆ&÷…³%ÒÆ&÷…³5ÒÇF†VÖRÇ6Vç6—F—f—G’ÆÆV&æW"Æ†–v„67W&7’“°¢–çB66÷&SÖ6Æ–'&F–öå66÷&R‡G&–Â“°¢–b‡66÷&Sæ&W7E66÷&R—¶&W7C×G&–Ã¶&W7E66÷&S×66÷&S¶6†÷6VãÖ&÷ƒ·Ð¢Ð¢–b†&W7E66÷&SãÓ‚—°¢&Vg2æVF—B‚’çWD–çB‚&ÆVgB"Æ6†÷6Vå³Ò’çWD–çB‚'F÷"Æ6†÷6Vå³Ò¢çWD–çB‚'&–v‡B"Æ6†÷6Vå³%Ò’çWD–çB‚&&÷GFöÒ"Æ6†÷6Vå³5Ò¢çWD&ööÆVâ‚&f÷&6UöWFõö6Æ–'&F–öâ"ÆfÇ6R¢çWDÆöær‚&WFõö6Æ–'&FVEöB"Å7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚’’æÇ’‚“°¢Ð¢&WGW&â&W7C°¢Ð ¢&—fFR–çB6Æ–'&F–öå66÷&R„6æFÆUf—6–öâäæÇ—6—2—°¢–b†ÓÖçVÆÂ—&WGW&â°¢&WGW&â†çfÆ–Có£’´ÖF‚æÖ‚ƒÆæFWFV7FVD&–ç2“°¢Ð ¢&—fFR&ööÆVâæÇ—¦T&—FÖ„&—FÖ"Æ&ööÆVâÆ—fU&Vg&W6‚Æ&ööÆVâWFöÖF–2ÆÆöærF&vWD&÷VæF'’—°¢&ööÆVâ—%fW&–f–VC×&Vg&W6„FWFV7FVD6öçFW‡B‚“°¢–b‚—%fW&–f–VB—°¢6†÷u—$æ÷EfW&–f–VB‚“°¢&WGW&âfÇ6S°¢Ð¢7G&–ær76WCÖ7W'&VçD76WB‚“°¢ÆV&æW"ç6WD76WB†76WB“°¢6æFÆUf—6–öâäæÇ—6—2ÖæÇ—¦Uv—F„WFô6Æ–'&F–öâ†"“°¢–b†ÓÖçVÆÇÇÂçfÆ–GÇÆæFWFV7FVD&–ç3Ã‚—°¢–b†Æ—fU&Vg&W6‚—6†÷tÆ—fU7FGW2‚$’Ä•dR(
+"d”äD”är4äDÄU2"“°¢VÇ6R6†÷uVæf–Æ&ÆR‚$d”äD”är4äDÄU2"“°¢&WGW&âfÇ6S°¢Ð¢&WVW7DW‡FW&æÅvV$FF†76WB“°¢FV6†æ–6ÄÖöFVÂä×VÇF’vV#×W6&ÆTW‡FW&æÄFF†76WB“°¢–b‡vV"ÖçVÆÂ—°¢&ööÆVâ÷F3Ö76WBçFõWW$66R„Æö6ÆRåU2’æ6öçF–ç2‚$õD2"“°¢‡–'&–E&VF–7F–öäVæv–æRägW6–öâgW6VCÔ‡–'&–E&VF–7F–öäVæv–æRægW6R€¢æ†÷&—¦öç2ÇvV"Ç&Vg2ævWD&ööÆVâ‚&†–v…ö67W&7’"ÇG'VR’À¢&Vg2ævWD&ööÆVâ‚&VÆ—FUöÖöFR"ÇG'VR’Ç&Vg2ævWD–çB‚'6Vç6—F—f—G’"Ã’À¢&Vg2ævWE7G&–ær‚'6W76–öåöf–ÇFW""Â$ÄÂ"’Ç&Vg2ævWDÆöær‚&æWw5öÆö6µ÷VçF–Â"ÃÂ’À¢ÆV&æW"Æ÷F3òã#¢ãCRÆ÷F3ò%$TÂÔÔ$´UB4ôåDU…Bdõ"õD2#¢$Ä•dRô„Ä2"“°¢ÖæWr6æFÆUf—6–öâäæÇ—6—2†gW6VBç&W7VÇG2ÆæFWFV7FVD&–ç2ÆæÆFW7E’ÆçfÆ–BÆæ&ö&E7FFR“°¢W‡FW&æÅ7FGW3ÖgW6VBæFF7FGW2²†÷F3ò"(
+"õD24ôåDU…BôäÅ’#¢""“°¢Ð¢Æ7DæÇ—6—3Ö°¢–b‡6VÆdFV6—6–öâÖçVÆÂ—6VÆdFV6—6–öâæö'6W'fR†æ†÷&—¦öç2“° ¢–çB6VÆV7FVDƒ×6VÆV7FVD†÷&—¦öä–æFW‚‚“°¢–b‡6VÆV7FVDƒÃ—°¢–b†Æ—fU&Vg&W6‚—6†÷tÆ—fU7FGW2‚$’Ä•dR(
+"D”ÔTe$ÔRTä´äõtâ"“°¢VÇ6R6†÷uVæf–Æ&ÆR‚%D”ÔTe$ÔRTä´äõtâ"“°¢&WGW&âfÇ6S°¢Ð¢–b‡6VÆV7FVDƒãÖæ†÷&—¦öç2æÆVæwF‚—°¢–b†Æ—fU&Vg&W6‚—6†÷tÆ—fU7FGW2‚$’Ä•dR(
+"D”ÔTe$ÔRTä´äõtâ"“°¢VÇ6R6†÷uVæf–Æ&ÆR‚%D”ÔTe$ÔRTä´äõtâ"“°¢&WGW&âfÇ6S°¢Ð ¢6–væÅ&W7VÇB&W7CÖæ†÷&—¦öç5·6VÆV7FVD…Ó°¢–çB†÷&—¦öã×6VÆV7FVD‚³°¢–b†&W7CÓÖçVÆÂ—°¢–b†Æ—fU&Vg&W6‚—6†÷tÆ—fU7FGW2‚$’Ä•dR(
+"äòDD"“°¢VÇ6R6†÷uVæf–Æ&ÆR‚$äò$ô$$”Ä•E’DD"“°¢&WGW&âfÇ6S°¢Ð ¢6–væÅ&W7VÇBFV6—6–öã×6VÆdFV6—6–öãÓÖçVÆÃö&W7C§6VÆdFV6—6–öâæFV6–FR†&W7BÆ†÷&—¦öâÆÆV&æW"“° ¢òòcBãr'&ö¶W"Ö&ö&BÆV&æ–æs¢WfW'’Æ—fRg&ÖRÖ’6öçG&–'WFRFò7FFP¢òò7F&–Æ—G’Â'WBöæÇ’âW†7BgWGW&R6æFÆR6Æ÷6R—2ÆÆ÷vVBFò&V6öÖP¢òòG&–æ–ærÆ&VÂâæò67&VVç6†÷G2&R6fVBà¢&ööÆVâ&ö&DÆV&æ–æs×&Vg2ævWD&ööÆVâ‚&'&ö¶W%ö&ö&EöÆV&æ–ær"ÇG'VR“°¢–b†&ö&DÆV&æ–ærbb&ö&DÆV&æW"ÖçVÆÂbbæ&ö&E7FFRÖçVÆÂ—°¢–b†Æ—fU&Vg&W6‚–&ö&DÆV&æW"æö'6W'fTÆ—fR†76WBÇ6VÆV7FVD‚Ææ&ö&E7FFR“°¢–b†WFöÖF–2bbF&vWD&÷VæF'“ãÂ¢&ö&DÆV&æW"ç&W6öÇfR‡F&vWD&÷VæF'’Æ76WBÇ6VÆV7FVD‚ÆæÆFW7E’“°¢òò&W6öÇfVB&ö&BÖVÖ÷'’—26fRFòW6RöâWfW'’g&ÖRâÆ—fRg&ÖW2&P¢òòæWfW"Æ&VÇ3²F†W’öæÇ’VW'’&Wf–÷W6Ç’fÆ–FFVB†—7F÷'’à¢FV6—6–öãÖ&ö&DÆV&æW"æÇ’†76WBÇ6VÆV7FVD‚Ææ&ö&E7FFRÆFV6—6–öâ“°¢Ð ¢òò6VÆbÖÆV&æ–ær—2Æ–væVBFòF†RW†7B6ö×ÆWFVBÖ6æFÆR&÷VæF'’âöæÇ¢òòöff–6–ÂWFöÖF–266ç27&VFR÷&W6öÇfRÆ&VÇ3²×6V6öæBÆ—fRg&ÖW0¢òòæBÖçVÂF2æWfW"&V6öÖRG&–æ–ærÆ&VÇ2à¢–b†WFöÖF–2bbF&vWD&÷VæF'“ãÂ—°¢&ö6W74ÆV&æ–ætD&÷VæF'’‡F&vWD&÷VæF'’ÆÇ6VÆV7FVD‚ÆFV6—6–öâ“°¢–b†&ö&DÆV&æ–ærbb&ö&DÆV&æW"ÖçVÆÂbbæ&ö&E7FFRÖçVÆÂ¢&ö&DÆV&æW"æFE&VF–7F–öâ‡F&vWD&÷VæF'’Æ76WBÇ6VÆV7FVD‚Ç6VÆV7FVD‚³ÆæÆFW7E’Ææ&ö&E7FFR“°¢Ð ¢òò¶VWF†R÷F–öæÂvw&W76—fRGFW&âÖöFR6ö×ÆWFVÇ’÷WG6–FRF†R6fP¢òòÆV&æW"â—G2÷WF6öÖW2vòFò6W&FRÆö6Â7F÷&RæBæWfW"WFFP¢òòöæÆ–æTÆV&æW"÷"F†RfÆ–FFVB6öÖ×Væ—G’ÖÆV&æ–ærVWVRà¢&ööÆVâWFöÖF–5GFW&ç3×&Vg2ævWD&ööÆVâ‚&WFõ÷GFW&å÷6–væÇ2"ÆfÇ6R“°¢&ööÆVâöff–6–Å÷7D6Æ÷6SÖWFöÖF–2bbF&vWD&÷VæF'“ãÃ°¢–b†WFöÖF–5GFW&ç2—°¢òòGFW&âÖöFRÖ’—77VRâöff–6–ÂF—&V7F–öâöæÇ’g&öÒF†P¢òò'&ö¶W"ÖÆ–væVB÷7BÖ6Æ÷6R66ââÆ—fRöÖçVÂg&ÖW26âFW67&–&P¢òòF†R6†'BÂ'WB6ææ÷B&V7–6ÆRâöÆFW"GFW&â–çFòæWrG&FRà¢–b†öff–6–Å÷7D6Æ÷6R¢FV6—6–öãÖÇ”WFöÖF–5GFW&å6–væÂ†FV6—6–öâÆæ&ö&E7FFR“°¢VÇ6P¢FV6—6–öã×GFW&äæõG&FR†FV6—6–öâÂ%t•D”ärdõ"ÄDU5B4äDÄR4Äõ4R"“°¢ÖVÇ6R–b‚öff–6–Å÷7D6Æ÷6R—°¢òò6fW"ÖöFRföÆÆ÷w2F†R6ÖRF–Ö–ær'VÆR2GFW&âÖöFS¢Æ—fP¢òò÷"ÖçVÆÇ’6GW&VBVæf–æ—6†VB6æFÆRÖ’WFFRö'6W'fF–öç2À¢òò'WB—B6âæWfW"&V6öÖRâ7F–öæ&ÆRæW‡BÖ6æFÆR6–væÂà¢FV6—6–öã×GFW&äæõG&FR†FV6—6–öâÂ%t•D”ärdõ"ÄDU5B4äDÄR4Äõ4R"“°¢Ð¢òò—"²F–ÖVg&ÖR&R6VÆV7FVB'’öæÆ–æTÆV&æW"ç6WD76WBö†÷&—¦öâà¢òòÆV&æ–ær6Æ–'&FW26öæf–FVæ6R–â&÷F‚ÖöFW2'WB—2æWfW"F†Rf–æÀ¢òò†&B&Æö6¶W"â6fW"ÖöFR&VÖ–ç2&÷FV7FVB'’—G26ö×ÆWFVBÖ6æFÆRÀ¢òòG&VæBÂ7G'V7GW&RæB6öæf—&ÖF–öâvFW2&÷fRà¢FV6—6–öãÖÆV&æW"æÇ•6–væÄÖöFT6Æ–'&F–öâ‡6VÆV7FVD‚ÆFV6—6–öâ“° ¢òò&÷F‚ÖöFW2ÆÆ÷r6öæf—&ÖVBÖVF—VÒ6†æ6RF—&V7F–öâƒsR²’à¢òòW†—7F–ær6ö×ÆWFVBÖ6æFÆRÂGFW&âæB6fWG’vFW27F–ÆÂÇ’à¢–b‚$%U’"æWVÇ2†FV6—6–öâæÆ&VÂ’ÇÂ%4TÄÂ"æWVÇ2†FV6—6–öâæÆ&VÂ’’°¢–çBf–æÅW&6VçCÒ$%U’"æWVÇ2†FV6—6–öâæÆ&VÂ¢öFV6—6–öâæ'W•&ö&&–Æ—G“¦FV6—6–öâç6VÆÅ&ö&&–Æ—G“°¢–b†f–æÅW&6VçCÃs¢FV6—6–öã×GFW&äæõG&FR†FV6—6–öâÂ$$TÄõrÔTD•TÒ4„ä4RƒsR’"“°¢Ð ¢–b†WFöÖF–2bbF&vWD&÷VæF'“ãÂbbGFW&äÆV&æ–ærÖçVÆÂ—°¢GFW&äÆV&æ–ærç&W6öÇfTæE&V6÷&B‡F&vWD&÷VæF'’Æ76WBÇ6VÆV7FVD‚Ç6VÆV7FVD‚³À¢æÆFW7E’ÆWFöÖF–5GFW&ç3öFV6—6–öã¦çVÆÂ“°¢Ð ¢–b†Æ—fU&Vg&W6‚—°¢òòÆ—fRV–6²FV6—6–öâ&VÖ–ç2F—6&ÆVB–â&÷F‚ÖöFW26ò—B6ææ÷@¢òò÷fW'&–FRF†R6ö×ÆWFVBÖ6æFÆRvFRv—F‚â–çG&&"%U’õ4TÄÂà¢6†÷tÆ—fTFV6—6–öâ†FV6—6–öâÆ†÷&—¦öâÆçVÆÂ“°¢&WGW&âG'VS°¢Ð ¢òòöff–6–ÂöÖçVÂ&W7VÇC¢öæR6ÆV"æW‡BÖ6æFÆRF—&V7F–öââ7G&öærÆW'G0¢òò7F–ÆÂ&WV—&RF†R7G&–7FW"6ö×ÆWFVBÖ6æFÆRVÆ—G’vFW2g&öÒF†R&6P¢òòÖöFVÂÂv†–ÆRF†RF—7Æ–VB&ö&&–Æ—G’W6W2F†R6VÆbÖFV6—6–öâ&ÆVæBà¢6†÷tF—&V7F–öâ†FV6—6–öâÆ†÷&—¦öâ“°¢&ööÆVâ6†F÷tÖöFS×&Vg2ævWD&ööÆVâ‚'6†F÷u÷FW7F–æuöÖöFR"ÆfÇ6R“°¢–b‚‚$%U’"æWVÇ2†FV6—6–öâæÆ&VÂ—ÇÂ%4TÄÂ"æWVÇ2†FV6—6–öâæÆ&VÂ’’bb6†F÷tÖöFR—°¢6†÷u7G&öæu6–væÂ†FV6—6–öâÆ†÷&—¦öâ“°¢ÒVÇ6R°¢6ÆV%7G&öæu6–væÄ6&B‚“°¢–b‡6†F÷tÖöFRbb7FGW5FW‡BÖçVÆÂ—7FGW5FW‡Bç6WEFW‡B‚%4„DõrDU5B(
+""¶FV6—6–öâæÆ&VÂ°¢"&V6÷&FVBv—F†÷WBæ÷F–f–6F–öâ"“°¢Ð¢&WGW&âG'VS°¢Ð ¢&—fFRfö–B&WVW7DW‡FW&æÅvV$FF…7G&–ær76WB—°¢7G&–ær¶W“Õ'VçF–ÖU6V7&WG2ævWDÖ&¶WDFF¶W’‚“°¢7G&–ær7–Ö&öÃÖW‡FW&æÅ7–Ö&öÂ†76WB“°¢–b†¶W“ÓÖçVÆÇÇÆ¶W’çG&–Ò‚’æ—4V×G’‚—ÇÇ7–Ö&öÂæ—4V×G’‚’—°¢W‡FW&æÅ7FGW3Ö¶W“ÓÖçVÆÇÇÆ¶W’çG&–Ò‚’æ—4V×G’‚¢ò%tT"DDôdb(
+"’´U’äTTDTB#¢%tT"DDTå5Uõ%DTB#°¢&WGW&ã°¢Ð¢Æöæræ÷sÕ7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚“°¢–b‡7–Ö&öÂæWVÇ2†W‡FW&æÄ76WB’bfW‡FW&æÅFV6†æ–6ÂÖçVÆÂbfæ÷rÖW‡FW&æÅWFFVDCÃCóÂ—&WGW&ã°¢–b†W‡FW&æÄfWF6†–ær—&WGW&ã°¢W‡FW&æÄfWF6†–æs×G'VS°¢æWrF‡&VB‚‚’Óç°¢G'—°¢Ö&¶WDFF6W'f–6Rä'VæFÆR'VæFÆSÖÖ&¶WDFFæfWF6„ÆÂ†¶W’Ç7–Ö&öÂ“°¢W‡FW&æÅFV6†æ–6ÃÕFV6†æ–6ÄÖöFVÂææÇ—¦R†'VæFÆR“°¢W‡FW&æÄ76WC×7–Ö&öÃ°¢W‡FW&æÅWFFVDCÕ7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚“°¢W‡FW&æÅ7FGW3Ò%tT"ô„Ä25D•dR(
+""·7–Ö&öÃ°¢Ö6F6‚„W†6WF–öâR—°¢W‡FW&æÅ7FGW3Ò%tT"DDt•D”är(
+""·6fTW‡FW&æÄW'&÷"†R“°¢Öf–æÆÇ—¶W‡FW&æÄfWF6†–æsÖfÇ6S·Ð¢ÒÂ&W‡FW&æÂÖÖ&¶WBÖ’"’ç7F'B‚“°¢Ð ¢&—fFRFV6†æ–6ÄÖöFVÂä×VÇF’W6&ÆTW‡FW&æÄFF…7G&–ær76WB—°¢7G&–ær7–Ö&öÃÖW‡FW&æÅ7–Ö&öÂ†76WB“°¢–b‡7–Ö&öÂæ—4V×G’‚—ÇÂ7–Ö&öÂæWVÇ2†W‡FW&æÄ76WB—ÇÆW‡FW&æÅFV6†æ–6ÃÓÖçVÆÂ—&WGW&âçVÆÃ°¢&WGW&â7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚’ÖW‡FW&æÅWFFVDCÃÓ$Â£cÂ£ÃöW‡FW&æÅFV6†æ–6Ã¦çVÆÃ°¢Ð ¢&—fFR7FF–27G&–ærW‡FW&æÅ7–Ö&öÂ…7G&–ær76WB—°¢–b†76WCÓÖçVÆÂ—&WGW&â"#°¢ÖF6†W"ÓÕ•"æÖF6†W"†76WBçFõWW$66R„Æö6ÆRåU2’ç&WÆ6R‚$õD2"Â""’“°¢–b‚Òæf–æB‚’—&WGW&â"#°¢&WGW&âÒæw&÷Wƒ’²"ò"¶Òæw&÷Wƒ"“°¢Ð ¢&—fFR7FF–27G&–ær6fTW‡FW&æÄW'&÷"„W†6WF–öâR—°¢7G&–ærÓÖSÓÖçVÆÃò'Væf–Æ&ÆR#¦RævWDÖW76vR‚“°¢–b†ÓÓÖçVÆÇÇÆÒçG&–Ò‚’æ—4V×G’‚’–ÓÒ'Væf–Æ&ÆR#°¢&WGW&âÒæÆVæwF‚‚“ãƒöÒç7V'7G&–ærƒÃƒ“¦Ó°¢Ð ¢&—fFRfö–B6†÷tÆ—fU7FGW2…7G&–ærFW‡B—°¢Ö–âç÷7B‚‚’Óç°¢–b‚66ææW$Væ&ÆVB‚’—&WGW&ã°¢6†÷u7FGW4÷fW&Æ’‚%$TE’"“°¢–b†Æ—fUFW‡BÖçVÆÂ—°¢Æ—fUFW‡Bç6WEFW‡B‡FW‡B“°¢Æ—fUFW‡Bç6WEFW‡D6öÆ÷"„6öÆ÷"ç&v"ƒ#RÃ#Ã#S"’“°¢Ð¢Ò“°¢Ð ¢&—fFRfö–B6†÷tÆ—fTFV6—6–öâ…6–væÅ&W7VÇB"Æ–çB†÷&—¦öâÅV–6´FV6—6–öäVæv–æRå&W7VÇBV–6²—°¢Ö–âç÷7B‚‚’Óç°¢–b‚66ææW$Væ&ÆVB‚—ÇÇ#ÓÖçVÆÂ—&WGW&ã°¢6†÷u7FGW4÷fW&Æ’‚%$TE’"“°¢WFFUF÷–æfô&"‡"Æ†÷&—¦öâÇV–6²“°¢–b‚%t•B"æWVÇ2‡"æÆ&VÂ’—°¢Æ7DÆ—fTF—&V7F–öãÒ"#°¢Æ7DÆ—fUW&6VçCÓ°¢Æ7DÆ—fU7FGW3Ò$’Ä•dR(
+"t•D”ärdõ"4äDÄR4Äõ4R#°¢6ÆV%7G&öæu6–væÄ6&B‚“°¢–b†Æ—fUFW‡BÖçVÆÂ—°¢Æ—fUFW‡Bç6WEFW‡B‚$’Ä•dR(
+"äòE$DR(
+"t•D”ärdõ"4äDÄR4Äõ4R"“°¢Æ—fUFW‡Bç6WEFW‡D6öÆ÷"„6öÆ÷"ç&v"ƒ#SÃ#BÃ#’“°¢Ð¢–b‡7FGW5FW‡BÖçVÆÂ—°¢7FGW5FW‡Bç6WEFW‡B‚$äòE$DR(
+"t•D”ärdõ"4ôÕÄUDTB4äDÄR"“°¢7FGW5FW‡Bç6WEFW‡D6öÆ÷"„6öÆ÷"ç&v"ƒ#SÃ#BÃ#’“°¢Ð¢&Vg&W6„–æfô6&B…7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚’“°¢&WGW&ã°¢Ð¢&ööÆVâ'W“×"æ'W•&ö&&–Æ—G“ã×"ç6VÆÅ&ö&&–Æ—G“°¢–çB7CÔÖF‚æÖ‚‡"æ'W•&ö&&–Æ—G’Ç"ç6VÆÅ&ö&&–Æ—G’“°¢Æ7DÆ—fTF—&V7F–öãÖ'W“ò$%U’#¢%4TÄÂ#°¢Æ7DÆ—fUW&6VçC×7C°¢–b†Æ—fUFW‡BÖçVÆÂ—°¢–çBÆV&æVCÖ&ö&DÆV&æW#ÓÖçVÆÃó¦&ö&DÆV&æW"çF÷FÅ6×ÆW2‚“°¢öæÆ–æTÆV&æW"åfW&–f–6F–öâfW&–f–VCÖÆV&æW"çfW&–f–6F–öâ„ÖF‚æÖ‚ƒÄÖF‚æÖ–âƒBÆ†÷&—¦öâÓ’’“°¢–b‡V–6²ÖçVÆÂbbV–6²æ†–v„6†æ6RbbfW&–f–VBæ†–v…fW&–f–VB‚’—°¢&ööÆVâ#Ò$%U’"æWVÇ2‡V–6²æÆ&VÂ“°¢6†÷uV–6µ6–væÄ6&B‡V–6²Æ†÷&—¦öâ“°¢Ö–&Tæ÷F–g•V–6²‡V–6²Æ†÷&—¦öâÇfW&–f–VB“°¢7G&–ærfW&–f–VDÆ&VÃÖ6öæf–FVæ6UF—FÆR‡V–6²ç66÷&R“°¢Æ7DÆ—fU7FGW3×fW&–f–VDÆ&VÂ²""·V–6²æÆ&VÂ²""·V–6²ç66÷&R²"R(
+""·V–6²ç&V6öã°¢Æ—fUFW‡Bç6WEFW‡B‡fW&–f–VDÆ&VÂ²""·V–6²æÆ&VÂ²""·V–6²ç66÷&R²"R(
+""·G&FTGW&F–öâ††÷&—¦öâ’°¢"(
+""·V–6²æ6öæf—&ÖF–öç2²"ób(
+"5D$ÄR"·V–6²ç7F&ÆU66ç2°¢‡&Vg2ævWD&ööÆVâ‚&'&ö¶W%ö&ö&EöÆV&æ–ær"ÇG'VR“ò"(
+"$ô$B"¶ÆV&æVC¢""’“°¢Æ—fUFW‡Bç6WEFW‡D6öÆ÷"‡#ô6öÆ÷"ç&v"ƒsBÃ##"Ã#‚“¤6öÆ÷"ç&v"ƒ#C‚Ã2Ã2’“°¢–b‡7FGW5FW‡BÖçVÆÂ—°¢7FGW5FW‡Bç6WEFW‡B‡fW&–f–VDÆ&VÂ²""·V–6²æÆ&VÂ²"(
+"E$DR"·G&FTGW&F–öâ††÷&—¦öâ’²%Æâ"·fW&–f–VBç7VÖÖ'’‚’“°¢7FGW5FW‡Bç6WEFW‡D6öÆ÷"‡#ô6öÆ÷"ç&v"ƒ3BÃ#3’Ãs"“¤6öÆ÷"ç&v"ƒ#S"ÃcRÃcR’“°¢Ð¢ÖVÇ6W°¢7G&–ær×V–6³ÓÖçVÆÃò"#¢‚"(
+""²‡V–6²æ†–v„6†æ6S÷fW&–f–VBç7FGW3¢$äòE$DR"’²""·V–6²æ6öæf—&ÖF–öç2²"ób"“°¢Æ7DÆ—fU7FGW3Ò$’Ä•dR(
+""¶Æ7DÆ—fTF—&V7F–öâ²""·7B²"R(
+"Ò"¶†÷&—¦öâ·°¢Æ—fUFW‡Bç6WEFW‡B‚$’Ä•dR(
+""²†'W“ò$%U’#¢%4TÄÂ"’·7B²"R(
+"Ò"¶†÷&—¦öâ·°¢‡&Vg2ævWD&ööÆVâ‚&'&ö¶W%ö&ö&EöÆV&æ–ær"ÇG'VR“ò"(
+"$ô$B"¶ÆV&æVC¢""’“°¢Æ—fUFW‡Bç6WEFW‡D6öÆ÷"†'W“ô6öÆ÷"ç&v"ƒ3BÃ#3’Ãs"“¤6öÆ÷"ç&v"ƒ#S"ÃcRÃcR’“°¢–b‡V–6²ÖçVÆÂbb7FGW5FW‡BÖçVÆÂbbV–6²ç&V6öâç7F'G5v—F‚‚$äòE$DS¢"’—°¢7FGW5FW‡Bç6WEFW‡B‡V–6²ç&V6öâ“°¢7FGW5FW‡Bç6WEFW‡D6öÆ÷"„6öÆ÷"ç&v"ƒ#SÃ“Ã3b’“°¢Ð¢Ð¢&Vg&W6„–æfô6&B…7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚’“°¢Ð¢Ò“°¢Ð ¢&—fFRfö–B6†÷uVæf–Æ&ÆR…7G&–ærFW‡B—°¢Ö–âç÷7B‚‚’Óç°¢–b‚66ææW$Væ&ÆVB‚’—&WGW&ã°¢6†÷u7FGW4÷fW&Æ’‚%$TE’"“°¢–b‡7FGW5FW‡BÖçVÆÂ—°¢7FGW5FW‡Bç6WEFW‡B‡FW‡B“°¢7FGW5FW‡Bç6WEFW‡D6öÆ÷"„6öÆ÷"ç&v"ƒ3BÃ#Ã#3‚’“°¢Ð¢6ÆV%7G&öæu6–væÄ6&B‚“°¢WFFU7–Ö&öÅFW‡B‚“°¢Ò“°¢Ð ¢&—fFRfö–B6†÷tF—&V7F–öâ…6–væÅ&W7VÇB"Æ–çB†÷&—¦öâ—°¢Ö–âç÷7B‚‚’Óç°¢–b‚66ææW$Væ&ÆVB‚’—&WGW&ã°¢6†÷u7FGW4÷fW&Æ’‚%$TE’"“°¢WFFUF÷–æfô&"‡"Æ†÷&—¦öâÆçVÆÂ“°¢–b‡#ÓÖçVÆÂÇÂ%t•B"æWVÇ2‡"æÆ&VÂ’—°¢Æ7DF—&V7F–öãÒ"#°¢Æ7DF—&V7F–öåW&6VçCÓ°¢Æ7E6–væÄ†÷&—¦öãÖ†÷&—¦öã°¢6ÆV%7G&öæu6–væÄ6&B‚“°¢–b‡7FGW5FW‡BÖçVÆÂ—°¢7FGW5FW‡Bç6WEFW‡B‚$äòE$DR(
+"t•D”ärdõ"4ôÕÄUDTB4äDÄR"“°¢7FGW5FW‡Bç6WEFW‡D6öÆ÷"„6öÆ÷"ç&v"ƒ#SÃ#BÃ#’“°¢Ð¢WFFU7–Ö&öÅFW‡B‚“°¢&WGW&ã°¢Ð¢&ööÆVâ'W”ÆVC×"æ'W•&ö&&–Æ—G“ã×"ç6VÆÅ&ö&&–Æ—G“°¢Æ7DF—&V7F–öãÖ'W”ÆVCò$%U’#¢%4TÄÂ#°¢Æ7DF—&V7F–öåW&6VçCÔÖF‚æÖ‚‡"æ'W•&ö&&–Æ—G’Ç"ç6VÆÅ&ö&&–Æ—G’“°¢Æ7E6–væÄ†÷&—¦öãÖ†÷&—¦öã°¢–çB†“ÔÖF‚æÖ‚ƒÄÖF‚æÖ–âƒBÆ†÷&—¦öâÓ’“°¢Æ7Ev–å&FU6×ÆW3ÖÆV&æW"ç&V6VçD6÷VçB††’“°¢Æ7Ev–å&FSÖÆ7Ev–å&FU6×ÆW3ÓÓòÓ¦ÆV&æW"ç&V6VçD67W&7•7B††’“°¢–b‡&VF–7F–öåF&vWE7F'D×3ÃÓÂ—°¢–çBÖ–çWFW3×6VÆV7FVEF–ÖVg&ÖTÖ–çWFW2‚“°¢&VF–7F–öåF&vWE7F'D×3ÖÖ–çWFW3ãöæW‡D&÷VæF'’…7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚’ÆÖ–çWFW2“£Ã°¢Ð¢&Vg&W6…6–væÄF—7Æ’…7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚’“°¢WFFU7–Ö&öÅFW‡B‚“°¢Ò“°¢Ð ¢&—fFRfö–B6†÷u7G&öæu6–væÂ…6–væÅ&W7VÇB"Æ–çB†÷&—¦öâ—°¢Ö–âç÷7B‚‚’Óç°¢–b‚66ææW$Væ&ÆVB‚—ÇÇ#ÓÖçVÆÂ—&WGW&ã°¢–çB7CÒ$%U’"æWVÇ2‡"æÆ&VÂ“÷"æ'W•&ö&&–Æ—G“§"ç6VÆÅ&ö&&–Æ—G“°¢–b‡7CÃs—°¢6ÆV%7G&öæu6–væÄ6&B‚“°¢&WGW&ã°¢Ð¢–çB3Ò$%U’"æWVÇ2‡"æÆ&VÂ“ô6öÆ÷"ç&v"ƒ3BÃ#3’Ãs"“¤6öÆ÷"ç&v"ƒ#S"ÃcRÃcR“°¢6†÷u6–væÄ6&B‡"Æ†÷&—¦öâÆ2“°¢Ö–&Tæ÷F–g’‡"Æ†÷&—¦öâ“°¢Ò“°¢Ð ¢&—fFRfö–B6ÆV%7G&öæu6–væÄ6&B‚—°¢–b†–æfô6&E–ææVBÇÂ6–væÄ6&DÖçVÄ6Æ÷6TöæÇ’—&WGW&ã°¢–b‡6–væÄ6&BÖçVÆÂ—°¢G'—·vÒç&VÖ÷fUf–Wr‡6–væÄ6&B“·Ö6F6‚„W†6WF–öâ–væ÷&VB—·Ð¢6–væÄ6&CÖçVÆÃ°¢Ð¢Ð ¢ò¢¢F÷'&ö¶W"Ö&ö&B&ææW"&WVW7FVBf÷"F†RÖ&¶VB6†'BÖ†VFW"76Râ¢ð¢&—fFRfö–BWFFUF÷–æfô&"…6–væÅ&W7VÇB"Æ–çB†÷&—¦öâÅV–6´FV6—6–öäVæv–æRå&W7VÇBV–6²—°¢–b‚&ææW$Ööæ—F÷$Væ&ÆVB‚’ÇÂ#ÓÖçVÆÂ—&WGW&ã°¢–b‡F÷–æfõFW‡CÓÖçVÆÂ–7&VFUF÷–æfô&"‚“°¢–b‡F÷–æfõFW‡CÓÖçVÆÂ—&WGW&ã°¢7G&–ærF—&V7F–öãÒ%t•B"æWVÇ2‡"æÆ&VÂ“ò$äòE$DR#§"æÆ&VÃ°¢–çB7CÔÖF‚æÖ‚‡"æ'W•&ö&&–Æ—G’Ç"ç6VÆÅ&ö&&–Æ—G’“°¢&ööÆVâGFW&äÖöFS×&Vg2ævWD&ööÆVâ‚&WFõ÷GFW&å÷6–væÇ2"ÆfÇ6R“°¢–b‚GFW&äÖöFRbbV–6²ÖçVÆÂbbV–6²æ†–v„6†æ6R—°¢F—&V7F–öã×V–6²æÆ&VÃ°¢7C×V–6²ç66÷&S°¢Ð¢–b‚GFW&äÖöFR—°¢–çBÖ–æ–×VÓÔÖF‚æÖ‚ƒsÇ&Vg2ævWD–çB‚'V–6µöFV6—6–öå÷F‡&W6†öÆB"ÃƒR’“°¢–b‡7CÆÖ–æ–×VÒÇÂ%t•B"æWVÇ2‡"æÆ&VÂ’–F—&V7F–öãÒ$äòE$DR#°¢Ð¢7G&–ærGFW&ã×fÆ–FFVD&ææW%GFW&â‡"“°¢–b‡GFW&âæ—4V×G’‚’ÇÂ$ÕTÅD’Ôd5Dõ"4ôädÅTTä4R"æWVÇ2‡GFW&â’—GFW&ãÒ$äõBDUDT5DTB#°¢&ööÆVâ&V6VçEGFW&ã×GFW&âç7F'G5v—F‚‚%$T4TåB"“°¢–b‡&V6VçEGFW&â—GFW&ã×GFW&âç7V'7G&–ær‚%$T4TåB"æÆVæwF‚‚’’çG&–Ò‚“°¢ÆöærVçG'”C×&VF–7F–öåF&vWE7F'D×3å7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚¢÷&VF–7F–öåF&vWE7F'D×3¦æW‡D&÷VæF'’…7—7FVÒæ7W'&VçEF–ÖTÖ–ÆÆ—2‚’ÄÖF‚æÖ‚ƒÆ†÷&—¦öâ’“°¢7G&–ærVçG'“ÖæWr6–×ÆTFFTf÷&ÖB‚$„ƒ¦ÖÓ§72"ÄÆö6ÆRævWDFVfVÇB‚’’æf÷&ÖB†æWrFFR†VçG'”B’“°¢7G&–ær66÷&SÒ$äòE$DR"æWVÇ2†F—&V7F–öâ“ò"#¢"(
+""·7B²"R#°¢7G&–ærG&VæCÖÖ&¶WEG&VæB†Æ7DæÇ—6—3ÓÖçVÆÃöçVÆÃ¦Æ7DæÇ—6—2æ&ö&E7FFR“°¢7G&–ærG&VæE&V6öãÒ"#°¢–b‚$äòE$DR"æWVÇ2†F—&V7F–öâ’bbG&VæBæ6öçF–ç2‚$U…DTäDTB"’¢G&VæE&V6öãÒ"(
+"t•Bdõ"TÄÄ$4²#°¢VÇ6R–b‚$äòE$DR"æWVÇ2†F—&V7F–öâ’bbV–6²ÖçVÆÀ¢bbV–6²ç&V6öâÖçVÆÂbbV–6²ç&V6öâç7F'G5v—F‚‚$äòE$DS¢"’¢G&VæE&V6öãÒ"(
+""·V–6²ç&V6öâç7V'7G&–ær‚$äòE$DS¢"æÆVæwF‚‚’’çG&–Ò‚“°¢F÷–æfõFW‡Bç6WEFW‡B‚$äU…B4äDÄS¢"¶F—&V7F–öâ·66÷&R²%Æâ"°¢‡&V6VçEGFW&ãò%$T4TåBEDU$ã¢#¢%EDU$ã¢"’·GFW&â²%Æâ"°¢%E$TäC¢"·G&VæB·G&VæE&V6öâ²%Æâ"°¢7W'&VçD76WB‚’²"(
+"Ò"´ÖF‚æÖ‚ƒÆ†÷&—¦öâ’²"(
+"TåE%’"¶VçG'’“°¢F÷–æfõFW‡Bç6WEFW‡D6öÆ÷"‚$äòE$DR"æWVÇ2†F—&V7F–öâ¢ô6öÆ÷"ç&v"ƒ#SÃ#BÃ#“¢‚$%U’"æWVÇ2†F—&V7F–öâ¢ô6öÆ÷"ç&v"ƒ3BÃ#3’Ãs"“¤6öÆ÷"ç&v"ƒ#S"ÃcRÃcR’’“°¢Ð ¢&—fFR6–væÅ&W7VÇBÇ”WFöÖF–5GFW&å6–væÂ…6–væÅ&W7VÇB"Ä6æFÆUf—6–öâä&ö&E7FFR7FFR—°¢–b‡#ÓÖçVÆÂ—&WGW&âçVÆÃ°¢7G&–ærGFW&ã×fÆ–FFVD&ææW%GFW&â‡"“°¢7G&–ærF—&V7F–öãÖF—&V7F–öäg&öÕGFW&â‡GFW&â“°¢–b†F—&V7F–öâæ—4V×G’‚’—&WGW&âGFW&äæõG&FR‡"Â$äò5E$ôär4ôäd•$ÔTBEDU$â"“° ¢òòGFW&âÖöFR—2FVÆ–&W&FVÇ’FV6—6—fRöæÇ’f÷"vVçV–æVÇ’7G&öærÀ¢òò6ö×ÆWFVBæBf—7VÆÇ’6öæf—&ÖVB6WGWg&öÒF†RæWvW7B6Æ÷6VB6æFÆRà¢òò—BÖ’÷fW'&–FRF†R&6RÖöFVÂÂ'WBæWfW"vV²öæWWG&Â÷7FÆR6WGWà¢–çB7G&VæwFƒÔÖF‚æÖ‚‡"ç7G&VæwF‚ÄÖF‚æÖ‚‡"æ'W•&ö&&–Æ—G’Ç"ç6VÆÅ&ö&&–Æ—G’’“°¢–b‡7G&VæwFƒÃs—&WGW&âGFW&äæõG&FR‡"Â%EDU$â$TÄõrÔTD•TÒ4„ä4RƒsR’"“°¢–b‡7FFSÓÖçVÆÂ—&WGW&âGFW&äæõG&FR‡"Â$ÄDU5B4äDÄRäõBdU$”d”TB"“° ¢òòF†RæWvW7B6ö×ÆWFVB6æFÆR×W7B6öæf—&ÒF†RÖVBF—&V7F–öââF†—0¢òò&WfVçG2âV&Æ–W"w&VVâÖ'V&÷§R†f÷"W†×ÆR’g&öÒvVæW&F–ær%U¢òògFW"F†RÆFW7B6ö×ÆWFVB6æFÆR†2GW&æVB7G&öævÇ’&VBà¢&ööÆVâÆFW7D6öæf—&×3Ò$%U’"æWVÇ2†F—&V7F–öâ¢÷7FFRæÆ7DF—&V7F–öãâã#§7FFRæÆ7DF—&V7F–öãÂÒã#°¢&ööÆVâ&V6VçD6öæf—&×3Ò$%U’"æWVÇ2†F—&V7F–öâ¢÷7FFRç&V6VçEGvôF—&V7F–öãâÒãC§7FFRç&V6VçEGvôF—&V7F–öãÂãC°¢–b‚ÆFW7D6öæf—&×2ÇÂ&V6VçD6öæf—&×2¢&WGW&âGFW&äæõG&FR‡"Â$ÄDU5B4Äõ4TB4äDÄR4ôåE$D”5E2"¶F—&V7F–öâ“° ¢–çBF—&V7F–öæÃÔÖF‚æÖ–âƒÇ7G&VæwF‚“°¢–çB'Ò$%U’"æWVÇ2†F—&V7F–öâ“öF—&V7F–öæÃ£ÖF—&V7F–öæÃ°¢–çB7Ò%4TÄÂ"æWVÇ2†F—&V7F–öâ“öF—&V7F–öæÃ£ÖF—&V7F–öæÃ°¢7G&–ærW‡ÆæF–öãÒ$WFöÖF–2"¶F—&V7F–öâ²"g&öÒ7G&öær6öæf—&ÖVBGFW&ã¢"·GFW&â°¢"â"·"æW‡ÆæF–öã°¢&WGW&âæWr6–væÅ&W7VÇB†F—&V7F–öâÇ7G&VæwF‚Ç"ç66÷&RÆ'Ç7Ç"æ6öæf–FVæ6RÀ¢"ç&Vv–ÖRÇ"ç&t'W•&ö&&–Æ—G’Ç"ç6WGWVÆ—G’Ç"ç7G'V7GW&RÆW‡ÆæF–öâ“°¢Ð ¢&—fFR6–væÅ&W7VÇBGFW&äæõG&FR…6–væÅ&W7VÇB"Å7G&–ær&V6öâ—°¢–b‡#ÓÖçVÆÂ—&WGW&âçVÆÃ°¢7G&–ærW‡ÆæF–öã×&V6öâ²‡"æW‡ÆæF–öãÓÖçVÆÇÇÇ"æW‡ÆæF–öâæ—4V×G’‚¢ò"#¢"â"·"æW‡ÆæF–öâ“°¢&WGW&âæWr6–væÅ&W7VÇB‚%t•B"Ç"ç7G&VæwF‚Ç"ç66÷&RÇ"æ'W•&ö&&–Æ—G’Ç"ç6VÆÅ&ö&&–Æ—G’À¢"æ6öæf–FVæ6RÇ"ç&Vv–ÖRÇ"ç&t'W•&ö&&–Æ—G’Ç"ç6WGWVÆ—G’Ç"ç7G'V7GW&RÆW‡ÆæF–öâ“°¢Ð ¢&—fFR7G&–ærF—&V7F–öäg&öÕGFW&â…7G&–ærGFW&â—°¢–b‡GFW&ãÓÖçVÆÂ—&WGW&â"#°¢7G&–ær×GFW&âçFõWW$66R„Æö6ÆRåU2“°¢–b‡æ—4V×G’‚’ÇÂç7F'G5v—F‚‚%$T4TåB"’ÇÂæ6öçF–ç2‚$äõBDUDT5DTB"’ÇÂæ6öçF–ç2‚$äõB4ôäd•$ÔTB"¢ÇÂæ6öçF–ç2‚$t•D”är4ôäd•$ÔD”ôâ"¢ÇÂæ6öçF–ç2‚%5”ää”ärDõ"’ÇÂæ6öçF–ç2‚$”äDT4•4”ôâ"’—&WGW&â"#°¢òòF—&V7F–öâF&ÆRf÷"7G&öær6öæf—&ÖVBGFW&ç2âG&vöæfÇ’æ@¢òòw&fW7FöæR&R–çFVçF–öæÂF—&V7F–öæÂFö¦’W†6WF–öç3²Æ–âFö¦¢òò&VÖ–ç2æWWG&ÂæB6ææ÷B&öGV6RG&FRà¢&ööÆVâG&vöæfÇ“×æ6öçF–ç2‚$E$tôädÅ’Dô¤’"“°¢&ööÆVâw&fW7FöæS×æ6öçF–ç2‚$u$dU5DôäRDô¤’"“°¢–b‡æ6öçF–ç2‚$Dô¤’"’bbG&vöæfÇ’bbw&fW7FöæR—&WGW&â"#°¢&ööÆVâ'VÆÆ—6ƒÖG&vöæfÇ’ÇÂæ6öçF–ç2‚$%TÄÂ"’ÇÂæ6öçF–ç2‚$Ôõ$ä”är"¢ÇÂ‡æ6öíyçËh‘éì¶»§q«^uì(€€€€€€€€€€€€€€€ÍÝ¥Ñ ¡”¹•ÑÑ¥½¹5…Í­• ¤¥ì(€€€€€€€€€€€€€€€€€€€…Í”5½Ñ¥½¹Ù•¹Ð¹Q%=9}=]8è(€€€€€€€€€€€€€€€€€€€€€€€ÍÑ…ÉÑ`õÑ½Á%¹™½1À¹àìÍÑ…ÉÑdõÑ½Á%¹™½1À¹äì(€€€€€€€€€€€€€€€€€€€€€€€‘½Ý¹`õ”¹•ÑI…Ý` ¤ì‘½Ý¹dõ”¹•ÑI…Ýd ¤ì(€€€€€€€€€€€€€€€€€€€€€€€Ø¹Í•ÑAÉ•ÍÍ•¡ÑÉÕ”¤ì(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì(€€€€€€€€€€€€€€€€€€€…Í”5½Ñ¥½¹Ù•¹Ð¹Q%=9}5=Yè(€€€€€€€€€€€€€€€€€€€€€€€¥¹Ðµ…á`õ5…Ñ ¹µ…à À±•ÑI•Í½ÕÉ•Ì ¤¹•Ñ¥ÍÁ±…å5•ÑÉ¥Ì ¤¹Ý¥‘Ñ¡A¥á•±Ìµ‘À ÌÌÀ¤¤ì(€€€€€€€€€€€€€€€€€€€€€€€¥¹Ðµ…ádõ5…Ñ ¹µ…à À±•ÑI•Í½ÕÉ•Ì ¤¹•Ñ¥ÍÁ±…å5•ÑÉ¥Ì ¤¹¡•¥¡ÑA¥á•±Ìµ‘À àà¤¤ì(€€€€€€€€€€€€€€€€€€€€€€€Ñ½Á%¹™½1À¹àõ5…Ñ ¹µ…à À±5…Ñ ¹µ¥¸¡µ…á`±ÍÑ…ÉÑ`­5…Ñ ¹É½Õ¹¡”¹•ÑI…Ý` ¤µ‘½Ý¹`¤¤¤ì(€€€€€€€€€€€€€€€€€€€€€€€Ñ½Á%¹™½1À¹äõ5…Ñ ¹µ…à À±5…Ñ ¹µ¥¸¡µ…ád±ÍÑ…ÉÑd­5…Ñ ¹É½Õ¹¡”¹•ÑI…Ýd ¤µ‘½Ý¹d¤¤¤ì(€€€€€€€€€€€€€€€€€€€€€€€ÑÉåíÝ´¹ÕÁ‘…Ñ•Y¥•Ý1…å½ÕÐ¡Ñ½Á%¹™½	…È±Ñ½Á%¹™½1À¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì(€€€€€€€€€€€€€€€€€€€…Í”5½Ñ¥½¹Ù•¹Ð¹Q%=9}U@è(€€€€€€€€€€€€€€€€€€€…Í”5½Ñ¥½¹Ù•¹Ð¹Q%=9}90è(€€€€€€€€€€€€€€€€€€€€€€€Ø¹Í•ÑAÉ•ÍÍ•¡™…±Í”¤ì(€€€€€€€€€€€€€€€€€€€€€€€ÁÉ•™Ì¹•‘¥Ð ¤¹ÁÕÑ%¹Ð ‰‰…¹¹•É}àˆ±Ñ½Á%¹™½1À¹à¤(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¹ÁÕÑ%¹Ð ‰‰…¹¹•É}äˆ±Ñ½Á%¹™½1À¹ä¤¹…ÁÁ±ä ¤ì(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì(€€€€€€€€€€€€€€€€€€€‘•™…Õ±Ðè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì(€€€€€€€€€€€€€€€ô(€€€€€€€€€€€ô(€€€€€€€ô¤ì(€€€€€€€ÑÉåíÝ´¹…‘‘Y¥•Ü¡Ñ½Á%¹™½	…È±Ñ½Á%¹™½1À¤íõ…Ñ ¡á•ÁÑ¥½¸”¥ì(€€€€€€€€€€€Ñ½Á%¹™½	…Èõ¹Õ±°ìÑ½Á%¹™½Q•áÐõ¹Õ±°ìÑ½Á%¹™½1Àõ¹Õ±°ì(€€€€€€€ô(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥É•µ½Ù•Q½Á%¹™½	…È ¥ì(€€€€€€€¥˜¡Ý´„õ¹Õ±°€˜˜Ñ½Á%¹™½	…È„õ¹Õ±°¥íÑÉåíÝ´¹É•µ½Ù•Y¥•Ü¡Ñ½Á%¹™½	…È¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íõô(€€€€€€€Ñ½Á%¹™½	…Èõ¹Õ±°ìÑ½Á%¹™½Q•áÐõ¹Õ±°ìÑ½Á%¹™½1Àõ¹Õ±°ì(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥Í¡½ÝMÑ…ÑÕÍ=Ù•É±…ä¡MÑÉ¥¹œÍÑ…Ñ”¥ì(€€€€€€€¥˜¡Ý´ôõ¹Õ±°¥Ý´ô¡]¥¹‘½Ý5…¹…•È¥•ÑMåÍÑ•µM•ÉÙ¥”¡]%9=]}MIY%¤ì(€€€€€€€¥˜¡ÍÑ…ÑÕÍ	½à„õ¹Õ±°¥É•ÑÕÉ¸ì(€€€€€€€¥˜¡‰…¹¹•É5½¹¥Ñ½É¹…‰±• ¤¥É•…Ñ•Q½Á%¹™½	…È ¤ì((€€€€€€€€¼¼9½Éµ…°‰É½­•ÈÙ¥•ÜÍÑ…åÌ±•…¸è½¹±äÑ¡”É½Õ¹h±½¼¥ÌÙ¥Í¥‰±”¸(€€€€€€€ÍÑ…ÑÕÍ	½àõ¹•Ü1¥¹•…É1…å½ÕÐ¡Ñ¡¥Ì¤ì(€€€€€€€ÍÑ…ÑÕÍ	½à¹Í•Ñ=É¥•¹Ñ…Ñ¥½¸¡1¥¹•…É1…å½ÕÐ¹YIQ%0¤ì(€€€€€€€ÍÑ…ÑÕÍ	½à¹Í•ÑÉ…Ù¥Ñä¡É…Ù¥Ñä¹9QI}!=I%i=9Q0¤ì(€€€€€€€ÍÑ…ÑÕÍ	½à¹Í•ÑA…‘‘¥¹œ¡‘À È¤±‘À È¤±‘À È¤±‘À È¤¤ì((€€€€€€€™¥¹…°]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ±Àõ¹•Ü]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ (€€€€€€€€€€€€€€€‘À äØ¤°(€€€€€€€€€€€€€€€‘À äØ¤°(€€€€€€€€€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹QeA}MM%	%1%Qe}=YI1d°(€€€€€€€€€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹1}9=Q}=UM	1ð(€€€€€€€€€€€€€€€€€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹1}9=Q}Q=U!}5=0°(€€€€€€€€€€€€€€€A¥á•±½Éµ…Ð¹QI9M1U9P¤ì(€€€€€€€±À¹É…Ù¥ÑäõÉ…Ù¥Ñä¹Q=AñÉ…Ù¥Ñä¹9ì(€€€€€€€±À¹àõ‘À ÄÈ¤ì(€€€€€€€±À¹äõ‘À ÄÈÀ¤ì((€€€€€€€€¼¼±½…Ñ¥¹œÉ½Õ¹‰½Ð‰ÕÑÑ½¸°Í¥µ¥±…ÈÑ¼„¡…Ðµ¡•…¸Q…À€ôÍ…¸¹½Üì‘É…œ€ôµ½Ù”¸(€€€€€€€É…µ•1…å½ÕÐ‰Õ‰‰±•]É…Àõ¹•ÜÉ…µ•1…å½ÕÐ¡Ñ¡¥Ì¤ì(€€€€€€€1¥¹•…É1…å½ÕÐ¹1…å½ÕÑA…É…µÌ‰Õ‰‰±•]É…Á1Àõ¹•Ü1¥¹•…É1…å½ÕÐ¹1…å½ÕÑA…É…µÌ¡‘À ÄÀÐ¤±‘À äØ¤¤ì(€€€€€€€‰Õ‰‰±•]É…Á1À¹É…Ù¥ÑäõÉ…Ù¥Ñä¹9QI}!=I%i=9Q0ì(€€€€€€€ÍÑ…ÑÕÍ	½à¹…‘‘Y¥•Ü¡‰Õ‰‰±•]É…À±‰Õ‰‰±•]É…Á1À¤ì((€€€€€€€%µ…•Y¥•ÜÍ…¹	Õ‰‰±”õ¹•Ü%µ…•Y¥•Ü¡Ñ¡¥Ì¤ì(€€€€€€€Í…¹	Õ‰‰±”¹Í•Ñ%µ…•I•Í½ÕÉ”¡H¹µ¥Áµ…À¹¥}±…Õ¹¡•È¤ì(€€€€€€€Í…¹	Õ‰‰±”¹Í•ÑM…±•QåÁ”¡%µ…•Y¥•Ü¹M…±•QåÁ”¹%Q}9QH¤ì(€€€€€€€Í…¹	Õ‰‰±”¹Í•Ñ½¹Ñ•¹Ñ•ÍÉ¥ÁÑ¥½¸ ‰Q…ÀÑ¼É•™É•Í ¸1½¹œÁÉ•ÍÌ™½È¥¹™½Éµ…Ñ¥½¸¸É…œÑ¼µ½Ù”¸ˆ¤ì(€€€€€€€Í…¹	Õ‰‰±”¹Í•Ñ±¥­…‰±”¡ÑÉÕ”¤ì(€€€€€€€É…µ•1…å½ÕÐ¹1…å½ÕÑA…É…µÌÍ…¹1Àõ¹•ÜÉ…µ•1…å½ÕÐ¹1…å½ÕÑA…É…µÌ¡‘À àÐ¤±‘À àÐ¤¤ì(€€€€€€€Í…¹1À¹É…Ù¥ÑäõÉ…Ù¥Ñä¹9QHì(€€€€€€€‰Õ‰‰±•]É…À¹…‘‘Y¥•Ü¡Í…¹	Õ‰‰±”±Í…¹1À¤ì((€€€€€€€€¼¼•¹Ñ±”å‰•ÈÁÕ±Í”­••ÁÌÑ¡”Í¡½ÉÑÕÐ…±¥Ù”Ý¥Ñ¡½ÕÐÉ½Ñ…Ñ¥¹œÑ¡”h±•ÑÑ•ÉÌ¸(€€€€€€€=‰©•Ñ¹¥µ…Ñ½ÈÁÕ±Í•`õ=‰©•Ñ¹¥µ…Ñ½È¹½™±½…Ð¡Í…¹	Õ‰‰±”±Y¥•Ü¹M1}`°Ä¸Á˜°Ä¸Àá˜¤ì(€€€€€€€=‰©•Ñ¹¥µ…Ñ½ÈÁÕ±Í•dõ=‰©•Ñ¹¥µ…Ñ½È¹½™±½…Ð¡Í…¹	Õ‰‰±”±Y¥•Ü¹M1}d°Ä¸Á˜°Ä¸Àá˜¤ì(€€€€€€€=‰©•Ñ¹¥µ…Ñ½È±½Üõ=‰©•Ñ¹¥µ…Ñ½È¹½™±½…Ð¡Í…¹	Õ‰‰±”±Y¥•Ü¹1A!°¸àÉ˜°Ä¸Á˜¤ì(€€€€€€€ÁÕ±Í•`¹Í•ÑÕÉ…Ñ¥½¸ äÀÁ0¤ìÁÕ±Í•d¹Í•ÑÕÉ…Ñ¥½¸ äÀÁ0¤ì±½Ü¹Í•ÑÕÉ…Ñ¥½¸ äÀÁ0¤ì(€€€€€€€ÁÕ±Í•`¹Í•ÑI•Á•…Ñ½Õ¹Ð¡Y…±Õ•¹¥µ…Ñ½È¹%9%9%Q¤ì(€€€€€€€ÁÕ±Í•d¹Í•ÑI•Á•…Ñ½Õ¹Ð¡Y…±Õ•¹¥µ…Ñ½È¹%9%9%Q¤ì(€€€€€€€±½Ü¹Í•ÑI•Á•…Ñ½Õ¹Ð¡Y…±Õ•¹¥µ…Ñ½È¹%9%9%Q¤ì(€€€€€€€ÁÕ±Í•`¹Í•ÑI•Á•…Ñ5½‘”¡Y…±Õ•¹¥µ…Ñ½È¹IYIM¤ì(€€€€€€€ÁÕ±Í•d¹Í•ÑI•Á•…Ñ5½‘”¡Y…±Õ•¹¥µ…Ñ½È¹IYIM¤ì(€€€€€€€±½Ü¹Í•ÑI•Á•…Ñ5½‘”¡Y…±Õ•¹¥µ…Ñ½È¹IYIM¤ì(€€€€€€€¹¥µ…Ñ½ÉM•Ðå‰•ÉAÕ±Í”õ¹•Ü¹¥µ…Ñ½ÉM•Ð ¤ì(€€€€€€€å‰•ÉAÕ±Í”¹Á±…åQ½•Ñ¡•È¡ÁÕ±Í•`±ÁÕ±Í•d±±½Ü¤ì(€€€€€€€å‰•ÉAÕ±Í”¹ÍÑ…ÉÐ ¤ì((€€€€€€€€¼¼I•±¥…‰±”Ñ…ÀµÙ•ÉÍÕÌµ‘É…œ¡…¹‘±¥¹œ¸Mµ…±°™¥¹•Èµ½Ù•µ•¹Ð¥ÌÍÑ¥±°„Q@¸(€€€€€€€™¥¹…°¥¹ÐÑ½Õ¡M±½ÀõY¥•Ý½¹™¥ÕÉ…Ñ¥½¸¹•Ð¡Ñ¡¥Ì¤¹•ÑM…±•‘Q½Õ¡M±½À ¤ì(€€€€€€€Í…¹	Õ‰‰±”¹Í•Ñ=¹Q½Õ¡1¥ÍÑ•¹•È¡¹•ÜY¥•Ü¹=¹Q½Õ¡1¥ÍÑ•¹•È ¥ì(€€€€€€€€€€€¥¹ÐÍÑ…ÉÑ`±ÍÑ…ÉÑdì(€€€€€€€€€€€™±½…Ð‘½Ý¹`±‘½Ý¹dì(€€€€€€€€€€€‰½½±•…¸‘É…¥¹œ±±½¹AÉ•ÍÍ•ì(€€€€€€€€€€€™¥¹…°IÕ¹¹…‰±”½Á•¹%¹™½Éµ…Ñ¥½¸ô ¤´ùì(€€€€€€€€€€€€€€€¥˜¡‘É…¥¹œ¥É•ÑÕÉ¸ì(€€€€€€€€€€€€€€€±½¹AÉ•ÍÍ•õÑÉÕ”ì(€€€€€€€€€€€€€€€Í¡½Ý%¹™½…É ¤ì(€€€€€€€€€€€ôì(€€€€€€€€€€€=Ù•ÉÉ¥‘”ÁÕ‰±¥Œ‰½½±•…¸½¹Q½Õ ¡Y¥•ÜØ±5½Ñ¥½¹Ù•¹Ð”¥ì(€€€€€€€€€€€€€€€ÍÝ¥Ñ ¡”¹•ÑÑ¥½¹5…Í­• ¤¥ì(€€€€€€€€€€€€€€€€€€€…Í”5½Ñ¥½¹Ù•¹Ð¹Q%=9}=]8è(€€€€€€€€€€€€€€€€€€€€€€€ÍÑ…ÉÑ`õ±À¹àìÍÑ…ÉÑdõ±À¹äì(€€€€€€€€€€€€€€€€€€€€€€€‘½Ý¹`õ”¹•ÑI…Ý` ¤ì‘½Ý¹dõ”¹•ÑI…Ýd ¤ì(€€€€€€€€€€€€€€€€€€€€€€€‘É…¥¹œõ™…±Í”ì±½¹AÉ•ÍÍ•õ™…±Í”ì(€€€€€€€€€€€€€€€€€€€€€€€µ…¥¸¹Á½ÍÑ•±…å•¡½Á•¹%¹™½Éµ…Ñ¥½¸±Y¥•Ý½¹™¥ÕÉ…Ñ¥½¸¹•Ñ1½¹AÉ•ÍÍQ¥µ•½ÕÐ ¤¤ì(€€€€€€€€€€€€€€€€€€€€€€€Ø¹Í•ÑAÉ•ÍÍ•¡ÑÉÕ”¤ì(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì(€€€€€€€€€€€€€€€€€€€…Í”5½Ñ¥½¹Ù•¹Ð¹Q%=9}5=Yè(€€€€€€€€€€€€€€€€€€€€€€€™±½…Ð‘àõ”¹•ÑI…Ý` ¤µ‘½Ý¹`ì(€€€€€€€€€€€€€€€€€€€€€€€™±½…Ð‘äõ”¹•ÑI…Ýd ¤µ‘½Ý¹dì(€€€€€€€€€€€€€€€€€€€€€€€¥˜ …‘É…¥¹œ€˜˜€¡5…Ñ ¹…‰Ì¡‘à¤ùÑ½Õ¡M±½Àñð5…Ñ ¹…‰Ì¡‘ä¤ùÑ½Õ¡M±½À¤¥ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€‘É…¥¹œõÑÉÕ”ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€µ…¥¸¹É•µ½Ù•…±±‰…­Ì¡½Á•¹%¹™½Éµ…Ñ¥½¸¤ì(€€€€€€€€€€€€€€€€€€€€€€€ô(€€€€€€€€€€€€€€€€€€€€€€€¥˜¡‘É…¥¹œ¥ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€±À¹àõ5…Ñ ¹µ…à À±ÍÑ…ÉÑ`´¡¥¹Ð¥‘à¤ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€±À¹äõ5…Ñ ¹µ…à À±ÍÑ…ÉÑd¬¡¥¹Ð¥‘ä¤ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€ÑÉåíÝ´¹ÕÁ‘…Ñ•Y¥•Ý1…å½ÕÐ¡ÍÑ…ÑÕÍ	½à±±À¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€€€€€€€€€€€€€€€€€€€€€ô(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì(€€€€€€€€€€€€€€€€€€€…Í”5½Ñ¥½¹Ù•¹Ð¹Q%=9}U@è(€€€€€€€€€€€€€€€€€€€€€€€µ…¥¸¹É•µ½Ù•…±±‰…­Ì¡½Á•¹%¹™½Éµ…Ñ¥½¸¤ì(€€€€€€€€€€€€€€€€€€€€€€€Ø¹Í•ÑAÉ•ÍÍ•¡™…±Í”¤ì(€€€€€€€€€€€€€€€€€€€€€€€¥˜ …‘É…¥¹œ€˜˜€…±½¹AÉ•ÍÍ•¥ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€ÉÕ¹5…¹Õ…±M…¸ ¤ì(€€€€€€€€€€€€€€€€€€€€€€€€€€€Ø¹Á•É™½Éµ±¥¬ ¤ì(€€€€€€€€€€€€€€€€€€€€€€€ô(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì(€€€€€€€€€€€€€€€€€€€…Í”5½Ñ¥½¹Ù•¹Ð¹Q%=9}90è(€€€€€€€€€€€€€€€€€€€€€€€µ…¥¸¹É•µ½Ù•…±±‰…­Ì¡½Á•¹%¹™½Éµ…Ñ¥½¸¤ì(€€€€€€€€€€€€€€€€€€€€€€€Ø¹Í•ÑAÉ•ÍÍ•¡™…±Í”¤ì(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì(€€€€€€€€€€€€€€€€€€€‘•™…Õ±Ðè(€€€€€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì(€€€€€€€€€€€€€€€ô(€€€€€€€€€€€ô(€€€€€€€ô¤ì((€€€€€€€ÑÉåíÝ´¹…‘‘Y¥•Ü¡ÍÑ…ÑÕÍ	½à±±À¤íõ…Ñ ¡á•ÁÑ¥½¸”¥íÍÑ…ÑÕÍ	½àõ¹Õ±°íô(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥ÉÕ¹5…¹Õ…±M…¸ ¥ì(€€€€€€€¥˜ …Í…¹¹•É¹…‰±• ¤¥ì(€€€€€€€€€€€Q½…ÍÐ¹µ…­•Q•áÐ¡Ñ¡¥Ì°‰M…¹¹•È¥Ì½™˜ˆ±Q½…ÍÐ¹19Q!}M!=IP¤¹Í¡½Ü ¤ì(€€€€€€€€€€€É•ÑÕÉ¸ì(€€€€€€€ô(€€€€€€€¥˜¡Í…¹	ÕÍä¥ì(€€€€€€€€€€€Q½…ÍÐ¹µ…­•Q•áÐ¡Ñ¡¥Ì°‰M…¸…±É•…‘äÉÕ¹¹¥¹œˆ±Q½…ÍÐ¹19Q!}M!=IP¤¹Í¡½Ü ¤ì(€€€€€€€€€€€É•ÑÕÉ¸ì(€€€€€€€ô(€€€€€€€¥˜¡ÍÑ…ÑÕÍQ•áÐ„õ¹Õ±°¥ì(€€€€€€€€€€€ÍÑ…ÑÕÍQ•áÐ¹Í•ÑQ•áÐ ‰M99%9Š˜ˆ¤ì(€€€€€€€€€€€ÍÑ…ÑÕÍQ•áÐ¹Í•ÑQ•áÑ½±½È¡½±½È¹Éˆ ÌÐ°ÈÄÄ°ÈÌà¤¤ì(€€€€€€€ô(€€€€€€€Q½…ÍÐ¹µ…­•Q•áÐ¡Ñ¡¥Ì°‰M…¹¹¥¹œ…¹‘±—Š˜ˆ±Q½…ÍÐ¹19Q!}M!=IP¤¹Í¡½Ü ¤ì(€€€€€€€¥¹Ðµ¥¹ÕÑ•ÌõÍ•±•Ñ•‘Q¥µ•™É…µ•5¥¹ÕÑ•Ì ¤ì(€€€€€€€ÁÉ•‘¥Ñ¥½¹Q…É•ÑMÑ…ÉÑ5Ìõµ¥¹ÕÑ•ÌøÀý¹•áÑ	½Õ¹‘…Éä¡MåÍÑ•´¹ÕÉÉ•¹ÑQ¥µ•5¥±±¥Ì ¤±µ¥¹ÕÑ•Ì¤èÁ0ì(€€€€€€€…ÁÑÕÉ•¹‘¹…±åé” ¤ì(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥Í¡½Ý%¹™½…É ¥ì(€€€€€€€¥˜¡Ý´ôõ¹Õ±°¥É•ÑÕÉ¸ì(€€€€€€€¥˜¡Í¥¹…±…É‘5…¹Õ…±±½Í•=¹±ä€˜˜Í¥¹…±…É„õ¹Õ±°¥É•ÑÕÉ¸ì(€€€€€€€¥¹™½…É‘A¥¹¹•õÑÉÕ”ì(€€€€€€€¥˜¡Í¥¹…±…É„õ¹Õ±°¥ì(€€€€€€€€€€€ÑÉåíÝ´¹É•µ½Ù•Y¥•Ü¡Í¥¹…±…É¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€€€€€€€€€Í¥¹…±…Éõ¹Õ±°ì(€€€€€€€ô((€€€€€€€¥¹Ð¡½É¥é½¸õ5…Ñ ¹µ…à Ä±Í•±•Ñ•‘Q¥µ•™É…µ•5¥¹ÕÑ•Ì ¤¤ì(€€€€€€€1¥¹•…É1…å½ÕÐ…Éõ¹•Ü1¥¹•…É1…å½ÕÐ¡Ñ¡¥Ì¤ì(€€€€€€€…É¹Í•Ñ=É¥•¹Ñ…Ñ¥½¸¡1¥¹•…É1…å½ÕÐ¹YIQ%0¤ì(€€€€€€€…É¹Í•ÑA…‘‘¥¹œ¡‘À ÄØ¤±‘À ÄÈ¤±‘À ÄØ¤±‘À ÄÈ¤¤ì(€€€€€€€É…‘¥•¹ÑÉ…Ý…‰±”‰œõ¹•ÜÉ…‘¥•¹ÑÉ…Ý…‰±” ¤ì(€€€€€€€‰œ¹Í•Ñ½±½È¡½±½È¹…Éˆ ÈÐÜ°ÄÄ°Äà°ÌÈ¤¤ì(€€€€€€€‰œ¹Í•Ñ½É¹•ÉI…‘¥ÕÌ¡‘À Äà¤¤ì(€€€€€€€‰œ¹Í•ÑMÑÉ½­”¡‘À È¤±½±½È¹Éˆ ÌÐ°ÈÄÄ°ÈÌà¤¤ì(€€€€€€€…É¹Í•Ñ	…­É½Õ¹¡‰œ¤ì((€€€€€€€Q•áÑY¥•ÜÑ¥Ñ±”õ¹•ÜQ•áÑY¥•Ü¡Ñ¡¥Ì¤ì(€€€€€€€Ñ¥Ñ±”¹Í•ÑQ•áÐ ‰hM99H%9=I5Q%=8ˆ¤ì(€€€€€€€Ñ¥Ñ±”¹Í•ÑQ•áÑM¥é” Ää¤ìÑ¥Ñ±”¹Í•ÑQåÁ•™…”¡¹Õ±°±QåÁ•™…”¹	=1¤ì(€€€€€€€Ñ¥Ñ±”¹Í•ÑQ•áÑ½±½È¡½±½È¹Éˆ ÌÐ°ÈÄÄ°ÈÌà¤¤ì(€€€€€€€…É¹…‘‘Y¥•Ü¡Ñ¥Ñ±”¤ì((€€€€€€€Q•áÑY¥•Ü‘•Ñ…¥±Ìõ¹•ÜQ•áÑY¥•Ü¡Ñ¡¥Ì¤ì(€€€€€€€‘•Ñ…¥±Ì¹Í•ÑQ•áÑM¥é” ÄÌ¤ì‘•Ñ…¥±Ì¹Í•ÑQ•áÑ½±½È¡½±½È¹]!%Q¤ì(€€€€€€€…É¹…‘‘Y¥•Ü¡‘•Ñ…¥±Ì¤ì(€€€€€€€¥¹™½•Ñ…¥±Ìõ‘•Ñ…¥±Ìì(€€€€€€€É•™É•Í¡%¹™½…É¡MåÍÑ•´¹ÕÉÉ•¹ÑQ¥µ•5¥±±¥Ì ¤¤ì((€€€€€€€	ÕÑÑ½¸±½Í”õ¹•Ü	ÕÑÑ½¸¡Ñ¡¥Ì¤ì(€€€€€€€±½Í”¹Í•ÑQ•áÐ ‰1=Mˆ¤ì±½Í”¹Í•Ñ±±…ÁÌ¡™…±Í”¤ì(€€€€€€€…É¹…‘‘Y¥•Ü¡±½Í”±¹•Ü1¥¹•…É1…å½ÕÐ¹1…å½ÕÑA…É…µÌ ´Ä±‘À ÐØ¤¤¤ì(€€€€€€€±½Í”¹Í•Ñ=¹±¥­1¥ÍÑ•¹•È¡Ø´ùì(€€€€€€€€€€€¥¹™½…É‘A¥¹¹•õ™…±Í”ì(€€€€€€€€€€€ÑÉåíÝ´¹É•µ½Ù•Y¥•Ü¡…É¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€€€€€€€€€¥˜¡Í¥¹…±…Éôõ…É¥Í¥¹…±…Éõ¹Õ±°ì(€€€€€€€€€€€¥˜¡¥¹™½•Ñ…¥±Ìôõ‘•Ñ…¥±Ì¥¥¹™½•Ñ…¥±Ìõ¹Õ±°ì(€€€€€€€ô¤ì((€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌÀõ¹•Ü]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ (€€€€€€€€€€€€€€€‘À ÌÀÀ¤±]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹]IA}=9Q9P°(€€€€€€€€€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹QeA}MM%	%1%Qe}=YI1d°(€€€€€€€€€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹1}9=Q}=UM	1ñ]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹1}9=Q}Q=U!}5=0°(€€€€€€€€€€€€€€€A¥á•±½Éµ…Ð¹QI9M1U9P¤ì(€€€€€€€À¹É…Ù¥ÑäõÉ…Ù¥Ñä¹9QI}!=I%i=9Q1ñÉ…Ù¥Ñä¹Q=@ìÀ¹äõ‘À ÄÔÀ¤ì(€€€€€€€ÑÉåíÝ´¹…‘‘Y¥•Ü¡…É±À¤íÍ¥¹…±…Éõ…ÉíÍ¥¹…±…É‘5…¹Õ…±±½Í•=¹±äõÑÉÕ”íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥É•™É•Í¡%¹™½…É¡±½¹œ¹½Ü¥ì(€€€€€€€¥˜ …¥¹™½…É‘A¥¹¹•ñð¥¹™½•Ñ…¥±Ìôõ¹Õ±°¥É•ÑÕÉ¸ì(€€€€€€€¥¹Ð¡½É¥é½¸õ5…Ñ ¹µ…à Ä±Í•±•Ñ•‘Q¥µ•™É…µ•5¥¹ÕÑ•Ì ¤¤ì(€€€€€€€±½¹œ¹•áÐõ¹•áÑ	½Õ¹‘…Éä¡¹½Ü±¡½É¥é½¸¤ì(€€€€€€€MÑÉ¥¹œ™¥¹…±M¥¹…°õ±…ÍÑ¥É•Ñ¥½¸¹¥ÍµÁÑä ¤ü‰%90èÝ…¥Ñ¥¹œ™½È½µÁ±•Ñ•…¹‘±”ˆ(€€€€€€€€€€€€€€€€è‰%90è€ˆ­±…ÍÑ¥É•Ñ¥½¸¬ˆ€ˆ­±…ÍÑ¥É•Ñ¥½¹A•É•¹Ð¬ˆ”ƒŠˆ9QId€ˆ­±½¬¡ÁÉ•‘¥Ñ¥½¹Q…É•ÑMÑ…ÉÑ5Ì¤ì(€€€€€€€MÑÉ¥¹œ±¥Ù”õ±…ÍÑ1¥Ù•¥É•Ñ¥½¸¹¥ÍµÁÑä ¤ý±…ÍÑ1¥Ù•MÑ…ÑÕÌ(€€€€€€€€€€€€€€€€è‰$1%Yè€ˆ­±…ÍÑ1¥Ù•¥É•Ñ¥½¸¬ˆ€ˆ­±…ÍÑ1¥Ù•A•É•¹Ð¬ˆ”ˆì(€€€€€€€¥¹™½•Ñ…¥±Ì¹Í•ÑQ•áÐ (€€€€€€€€€€€€€€€€‰¡…ÉÐè€ˆ­ÕÉÉ•¹ÑÍÍ•Ð ¤¬ˆƒŠˆ4ˆ­¡½É¥é½¸¬‰q¸ˆ¬(€€€€€€€€€€€€€€€€‰I•½µµ•¹‘•ÑÉ…‘”è€ˆ­ÑÉ…‘•ÕÉ…Ñ¥½¸¡¡½É¥é½¸¤¬‰q¸ˆ¬(€€€€€€€€€€€€€€€€‰A…ÑÑ•É¸5½‘”èÍÑÉ½¹œ½¹™¥Éµ•Á…ÑÑ•É¹Ì½¹±åq¹q¸ˆ¬(€€€€€€€€€€€€€€€±¥Ù”¬‰q¸ˆ¬(€€€€€€€€€€€€€€€™¥¹…±M¥¹…°¬‰q¸ˆ¬(€€€€€€€€€€€€€€€•¹ÑÉåMÑ…Ñ”¡¹½Ü±ÁÉ•‘¥Ñ¥½¹Q…É•ÑMÑ…ÉÑ5Ì¤¬‰q¸ˆ¬(€€€€€€€€€€€€€€€Ý¥¹I…Ñ•Q•áÐ ¤¬‰q¹q¸ˆ¬(€€€€€€€€€€€€€€€€‰9aP91è€ˆ­±½¬¡¹•áÐ¤¬ˆƒŠˆ€ˆ­½Õ¹Ñ‘½Ý¸¡¹•áÐµ¹½Ü¤¬‰q¸ˆ¬(€€€€€€€€€€€€€€€€‰1%Y…¹…±åÍ¥ÌƒŠˆ%90€ô…™Ñ•È…¹‘±”±½Í”ˆ¤ì(€€€ô((€€€ÁÉ¥Ù…Ñ”MÑÉ¥¹œÁÉ•ÍÍÕÉ•1¥¹”¡M¥¹…±I•ÍÕ±ÐÈ¥ì(€€€€€€€¥˜¡Èôõ¹Õ±°ñðÈ¹É•¥µ”ôõ¹Õ±°¥É•ÑÕÉ¸€ˆˆì(€€€€€€€MÑÉ¥¹œàõÈ¹É•¥µ”ì(€€€€€€€¥¹Ð¤õà¹¥¹‘•á=˜ ‰AIMMUI€ˆ¤ì(€€€€€€€¥˜¡¤ðÀ¥É•ÑÕÉ¸€ˆˆì(€€€€€€€¥¹Ð•¹õà¹¥¹‘•á=˜ ˆƒŠˆ€ˆ±¤¤ì(€€€€€€€¥˜¡•¹ðÀ¥•¹õà¹±•¹Ñ  ¤ì(€€€€€€€MÑÉ¥¹œØõà¹ÍÕ‰ÍÑÉ¥¹œ¡¤±•¹¤¹ÑÉ¥´ ¤ì(€€€€€€€É•ÑÕÉ¸Ø¹¥ÍµÁÑä ¤üˆˆè‰	UeH€¼M11H€ˆ­Øì(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥Í¡½ÝEÕ¥­M¥¹…±…É¡EÕ¥­•¥Í¥½¹¹¥¹”¹I•ÍÕ±ÐÅÕ¥¬±¥¹Ð¡½É¥é½¸¥ì(€€€€€€€¥˜¡¥¹™½…É‘A¥¹¹•¥É•ÑÕÉ¸ì(€€€€€€€¥˜¡ÅÕ¥¬ôõ¹Õ±°ñð€…ÅÕ¥¬¹¡¥¡¡…¹”ñðÝ´ôõ¹Õ±°¥É•ÑÕÉ¸ì(€€€€€€€¥˜¡ÅÕ¥¬¹Í½É”ðÜÀ¥É•ÑÕÉ¸ì(€€€€€€€¥˜¡Í¥¹…±…É‘5…¹Õ…±±½Í•=¹±ä€˜˜Í¥¹…±…É„õ¹Õ±°¥É•ÑÕÉ¸ì(€€€€€€€±½¹œÍ±½ÐõMåÍÑ•´¹ÕÉÉ•¹ÑQ¥µ•5¥±±¥Ì ¤¼¡5…Ñ ¹µ…à Ä±¡½É¥é½¸¤¨ØÁ|ÀÀÁ0¤ì(€€€€€€€MÑÉ¥¹œ­•äõÕÉÉ•¹ÑÍÍ•Ð ¤¬‰ñ4ˆ­¡½É¥é½¸¬‰ðˆ­ÅÕ¥¬¹±…‰•°¬‰ðˆ­Í±½Ðì(€€€€€€€¥˜¡­•ä¹•ÅÕ…±Ì¡±…ÍÑEÕ¥­A½ÁÕÁ-•ä¤¥É•ÑÕÉ¸ì(€€€€€€€±…ÍÑEÕ¥­A½ÁÕÁ-•äõ­•äì((€€€€€€€¥˜¡Í¥¹…±…É„õ¹Õ±°¥ì(€€€€€€€€€€€ÑÉåíÝ´¹É•µ½Ù•Y¥•Ü¡Í¥¹…±…É¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€€€€€€€€€Í¥¹…±…Éõ¹Õ±°ì(€€€€€€€ô(€€€€€€€‰½½±•…¸‰Õäô‰	Udˆ¹•ÅÕ…±Ì¡ÅÕ¥¬¹±…‰•°¤ì(€€€€€€€¥¹Ð½±½Èõ‰Õäý½±½È¹Éˆ ÜÐ°ÈÈÈ°ÄÈà¤é½±½È¹Éˆ ÈÐà°ÄÄÌ°ÄÄÌ¤ì(€€€€€€€=¹±¥¹•1•…É¹•È¹Y•É¥™¥…Ñ¥½¸Ù•É¥™¥•õ±•…É¹•È¹Ù•É¥™¥…Ñ¥½¸¡5…Ñ ¹µ…à À±5…Ñ ¹µ¥¸ Ð±¡½É¥é½¸´Ä¤¤¤ì((€€€€€€€1¥¹•…É1…å½ÕÐ…Éõ¹•Ü1¥¹•…É1…å½ÕÐ¡Ñ¡¥Ì¤ì(€€€€€€€…É¹Í•Ñ=É¥•¹Ñ…Ñ¥½¸¡1¥¹•…É1…å½ÕÐ¹YIQ%0¤ì(€€€€€€€…É¹Í•ÑA…‘‘¥¹œ¡‘À ÄØ¤±‘À ÄÈ¤±‘À ÄØ¤±‘À ÄÈ¤¤ì(€€€€€€€É…‘¥•¹ÑÉ…Ý…‰±”‰œõ¹•ÜÉ…‘¥•¹ÑÉ…Ý…‰±” ¤ì(€€€€€€€‰œ¹Í•Ñ½±½È¡½±½È¹…Éˆ ÈÐÜ°ÄÄ°Äà°ÌÈ¤¤ì(€€€€€€€‰œ¹Í•Ñ½É¹•ÉI…‘¥ÕÌ¡‘À Äà¤¤ì(€€€€€€€‰œ¹Í•ÑMÑÉ½­”¡‘À Ì¤±½±½È¤ì(€€€€€€€…É¹Í•Ñ	…­É½Õ¹¡‰œ¤ì((€€€€€€€Q•áÑY¥•ÜÑ¥Ñ±”õ¹•ÜQ•áÑY¥•Ü¡Ñ¡¥Ì¤ì(€€€€€€€Ñ¥Ñ±”¹Í•ÑQ•áÐ¡½¹™¥‘•¹•Q¥Ñ±”¡ÅÕ¥¬¹Í½É”¤¬ˆƒŠˆ€ˆ­ÅÕ¥¬¹±…‰•°¬ˆ€ˆ­ÅÕ¥¬¹Í½É”¬ˆ”ˆ¤ì(€€€€€€€Ñ¥Ñ±”¹Í•ÑQ•áÑM¥é” ÈÀ¤ìÑ¥Ñ±”¹Í•ÑQåÁ•™…”¡¹Õ±°±QåÁ•™…”¹	=1¤ìÑ¥Ñ±”¹Í•ÑQ•áÑ½±½È¡½±½È¤ì(€€€€€€€…É¹…‘‘Y¥•Ü¡Ñ¥Ñ±”¤ì((€€€€€€€Q•áÑY¥•Ü‘•Ñ…¥±Ìõ¹•ÜQ•áÑY¥•Ü¡Ñ¡¥Ì¤ì(€€€€€€€‘•Ñ…¥±Ì¹Í•ÑQ•áÐ¡ÕÉÉ•¹ÑÍÍ•Ð ¤¬ˆƒŠˆ4ˆ­¡½É¥é½¸¬ˆƒŠˆQI€ˆ­ÑÉ…‘•ÕÉ…Ñ¥½¸¡¡½É¥é½¸¤¬‰q¸ˆ¬(€€€€€€€€€€€€€€€ÅÕ¥¬¹É•…Í½¸¬‰q¸ˆ­Ù•É¥™¥•¹ÍÕµµ…Éä ¤¬‰q¹]…¥Ð™½È½µÁ±•Ñ•µ…¹‘±”½¹™¥Éµ…Ñ¥½¸ˆ¤ì(€€€€€€€‘•Ñ…¥±Ì¹Í•ÑQ•áÑM¥é” ÄÌ¤ì‘•Ñ…¥±Ì¹Í•ÑQ•áÑ½±½È¡½±½È¹]!%Q¤ì(€€€€€€€…É¹…‘‘Y¥•Ü¡‘•Ñ…¥±Ì¤ì((€€€€€€€	ÕÑÑ½¸±½Í”õ¹•Ü	ÕÑÑ½¸¡Ñ¡¥Ì¤ì(€€€€€€€±½Í”¹Í•ÑQ•áÐ ‰1=Mˆ¤ì±½Í”¹Í•Ñ±±…ÁÌ¡™…±Í”¤ì(€€€€€€€…É¹…‘‘Y¥•Ü¡±½Í”±¹•Ü1¥¹•…É1…å½ÕÐ¹1…å½ÕÑA…É…µÌ ´Ä±‘À ÐØ¤¤¤ì(€€€€€€€±½Í”¹Í•Ñ=¹±¥­1¥ÍÑ•¹•È¡Ø´ùì(€€€€€€€€€€€ÑÉåíÝ´¹É•µ½Ù•Y¥•Ü¡…É¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€€€€€€€€€¥˜¡Í¥¹…±…Éôõ…É¥íÍ¥¹…±…Éõ¹Õ±°íÍ¥¹…±…É‘5…¹Õ…±±½Í•=¹±äõ™…±Í”íô(€€€€€€€€€€€…¹•±M¥¹…±9½Ñ¥™¥…Ñ¥½¸ ¤ì(€€€€€€€ô¤ì((€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌÀõ¹•Ü]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ (€€€€€€€€€€€€€€€‘À ÌÀÀ¤±]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹]IA}=9Q9P°(€€€€€€€€€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹QeA}MM%	%1%Qe}=YI1d°(€€€€€€€€€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹1}9=Q}=UM	1ñ]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹1}9=Q}Q=U!}5=0°(€€€€€€€€€€€€€€€A¥á•±½Éµ…Ð¹QI9M1U9P¤ì(€€€€€€€À¹É…Ù¥ÑäõÉ…Ù¥Ñä¹9QI}!=I%i=9Q1ñÉ…Ù¥Ñä¹Q=@ìÀ¹äõ‘À ÄÔÀ¤ì(€€€€€€€ÑÉåíÝ´¹…‘‘Y¥•Ü¡…É±À¤íÍ¥¹…±…Éõ…ÉíÍ¥¹…±…É‘5…¹Õ…±±½Í•=¹±äõÑÉÕ”íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€ô((€€€ÁÉ¥Ù…Ñ”MÑÉ¥¹œÍ¡½ÉÑM•ÑÕÀ¡M¥¹…±I•ÍÕ±ÐÈ¥ì(€€€€€€€¥˜¡Èôõ¹Õ±°¥É•ÑÕÉ¸€‰5U1Q$µQ=H=91U9ˆì(€€€€€€€MÑÉ¥¹œ”õÈ¹•áÁ±…¹…Ñ¥½¸ôõ¹Õ±°üˆˆéÈ¹•áÁ±…¹…Ñ¥½¸ì(€€€€€€€MÑÉ¥¹œ±½Üõ”¹Ñ½1½Ý•É…Í”¡1½…±”¹UL¤ì(€€€€€€€¥¹Ð„õ±½Ü¹¥¹‘•á=˜ ‰±•‰ä€ˆ¤ì(€€€€€€€¥˜¡„øôÀ¥ì(€€€€€€€€€€€¥¹ÐÍÑ…ÉÐõ„¬Üì(€€€€€€€€€€€¥¹Ð•¹õ”¹¥¹‘•á=˜ œìœ±ÍÑ…ÉÐ¤ì(€€€€€€€€€€€¥˜¡•¹ðÀ¥•¹õ5…Ñ ¹µ¥¸¡”¹±•¹Ñ  ¤±ÍÑ…ÉÐ¬ÐÈ¤ì(€€€€€€€€€€€MÑÉ¥¹œàõ”¹ÍÕ‰ÍÑÉ¥¹œ¡ÍÑ…ÉÐ±•¹¤¹ÑÉ¥´ ¤ì(€€€€€€€€€€€¥˜ …à¹¥ÍµÁÑä ¤¥É•ÑÕÉ¸à¹Ñ½UÁÁ•É…Í”¡1½…±”¹UL¤ì(€€€€€€€ô(€€€€€€€¥˜¡È¹ÍÑÉÕÑÕÉ”„õ¹Õ±°˜˜…È¹ÍÑÉÕÑÕÉ”¹ÑÉ¥´ ¤¹¥ÍµÁÑä ¤¥É•ÑÕÉ¸È¹ÍÑÉÕÑÕÉ”¹Ñ½UÁÁ•É…Í”¡1½…±”¹UL¤ì(€€€€€€€É•ÑÕÉ¸€‰5U1Q$µQ=H=91U9ˆì(€€€ô((€€€€¼¨¨(€€€€€¨¼¹½Ð‘¥ÍÁ±…ä„Ù¥ÍÕ…±±ä‘•Ñ•Ñ•…¹‘±”¹…µ”Ý¡•¸¥Ð‘¥Í…É••ÌÝ¥Ñ Ñ¡”(€€€€€¨¹•Ý•ÍÐ¡…ÉÐÁÉ•ÍÍÕÉ”¸¥á•µÝ¥‘Ñ ÍÉ••¸Í…µÁ±¥¹œ…¸½…Í¥½¹…±±äÍÁ±¥Ð(€€€€€¨½¹”Ý¥‘”…¹‘±”¥¹Ñ¼Í•Ù•É…°½±½ÕÉ•É•¥½¹ÌìÑ¡¥ÌÕ…ÉÁÉ•Ù•¹ÑÌÑ¡½Í”(€€€€€¨É•¥½¹Ì™É½´‰•¥¹œÁÉ•Í•¹Ñ•…Ì„µÕ±Ñ¤µ…¹‘±”Á…ÑÑ•É¸¸(€€€€€¨¼(€€€ÁÉ¥Ù…Ñ”MÑÉ¥¹œÙ…±¥‘…Ñ•‘	…¹¹•ÉA…ÑÑ•É¸¡M¥¹…±I•ÍÕ±ÐÈ¥ì(€€€€€€€MÑÉ¥¹œÁ…ÑÑ•É¸õÍ¡½ÉÑM•ÑÕÀ¡È¤ì(€€€€€€€¥˜¡Á…ÑÑ•É¸ôõ¹Õ±°ñðÁ…ÑÑ•É¸¹ÑÉ¥´ ¤¹¥ÍµÁÑä ¤¥É•ÑÕÉ¸€‰9=PQQˆì(€€€€€€€MÑÉ¥¹œÀõÁ…ÑÑ•É¸¹Ñ½UÁÁ•É…Í”¡1½…±”¹UL¤ì(€€€€€€€€¼¼M½µ”•áÁ•ÉÐÍÕµµ…É¥•Ì…ÁÁ•¹„É•¥µ”…™Ñ•ÈÑ¡”…ÑÕ…°…¹‘±”¹…µ”¸(€€€€€€€€¼¼Q¡”‰…¹¹•È¹½Ü‘¥ÍÁ±…åÌÑÉ•¹Í•Á…É…Ñ•±ä°Í¼¹•Ù•ÈÁÉ•Í•¹ÐÑ¡…ÐÍÕ™™¥à(€€€€€€€€¼¼…Ì¥˜¥ÐÝ•É”Á…ÉÐ½˜Ñ¡”‘•Ñ•Ñ•Á…ÑÑ•É¸¸(€€€€€€€ÀõÀ¹É•Á±…•¥ÉÍÐ ‰x üé5MQHU%ñII9ñAQQI8¥qqÌ¨éqqÌ¨ˆ°ˆˆ¤ì(€€€€€€€ÀõÀ¹É•Á±…•±° ‰qqÌ©oŠ‰ñuqqÌ¨ üéI9qqÌ¨½qqÌ©5%añ	U11%M  üéqqÌ¨½qqÌ©aQ9¤ýñ	I%M  üéqqÌ¨½qqÌ©aQ9¤ü¥qqÌ¨ˆ°ˆˆ¤¹ÑÉ¥´ ¤ì(€€€€€€€…¹‘±•Y¥Í¥½¸¹	½…É‘MÑ…Ñ”ÍÑ…Ñ”õ±…ÍÑ¹…±åÍ¥Ìôõ¹Õ±°ý¹Õ±°é±…ÍÑ¹…±åÍ¥Ì¹‰½…É‘MÑ…Ñ”ì(€€€€€€€¥˜¡ÍÑ…Ñ”ôõ¹Õ±°¥É•ÑÕÉ¸Àì((€€€€€€€MÑÉ¥¹œµ…ÁÁ•‘¥É•Ñ¥½¸õ‘¥É•Ñ¥½¹É½µA…ÑÑ•É¸¡À¤ì(€€€€€€€‰½½±•…¸‰Õ±±¥Í ô‰	Udˆ¹•ÅÕ…±Ì¡µ…ÁÁ•‘¥É•Ñ¥½¸¤ì(€€€€€€€‰½½±•…¸‰•…É¥Í ô‰M10ˆ¹•ÅÕ…±Ì¡µ…ÁÁ•‘¥É•Ñ¥½¸¤ì((€€€€€€€‘½Õ‰±”¹•Ý•ÍÑAÉ•ÍÍÕÉ”ô¸ÌØ©ÍÑ…Ñ”¹Í•ÅÕ•¹•	¥…Ì¬¸ÈÐ©ÍÑ…Ñ”¹µ½µ•¹ÑÕ´(€€€€€€€€€€€€€€€€¬¸ÄØ©ÍÑ…Ñ”¹±…ÍÑ¥É•Ñ¥½¸¬¸ÈÐ©ÍÑ…Ñ”¹É••¹ÑQÝ½¥É•Ñ¥½¸ì(€€€€€€€‰½½±•…¸¹•Ý•ÍÑ	•…É¥Í õÍÑ…Ñ”¹É••¹ÑQÝ½¥É•Ñ¥½¸ð´¸ÈÀñðÍÑ…Ñ”¹±…ÍÑ¥É•Ñ¥½¸ð´¸Ìàì(€€€€€€€‰½½±•…¸¹•Ý•ÍÑ	Õ±±¥Í õÍÑ…Ñ”¹É••¹ÑQÝ½¥É•Ñ¥½¸ø¸ÈÀñðÍÑ…Ñ”¹±…ÍÑ¥É•Ñ¥½¸ø¸Ìàì(€€€€€€€‰½½±•…¸½¹™±¥ÑÌô¡‰Õ±±¥Í €˜˜€¡¹•Ý•ÍÑAÉ•ÍÍÕÉ”ð´¸ÄÀñð¹•Ý•ÍÑ	•…É¥Í ¤¤(€€€€€€€€€€€€€€€ñð€¡‰•…É¥Í €˜˜€¡¹•Ý•ÍÑAÉ•ÍÍÕÉ”ø¸ÄÀñð¹•Ý•ÍÑ	Õ±±¥Í ¤¤ì(€€€€€€€€¼¼-••ÀÕÍ•™Õ°½¹Ñ•áÐÙ¥Í¥‰±”Ý¥Ñ¡½ÕÐÁÉ•Í•¹Ñ¥¹œ…¸½±‘•ÈÍ•ÑÕÀ…ÌÑ¡”(€€€€€€€€¼¼±…Ñ•ÍÐ½µÁ±•Ñ•µ…¹‘±”Á…ÑÑ•É¸¸I9PÁ…ÑÑ•É¹Ì…É”‘¥ÍÁ±…äµ½¹±ä…¹(€€€€€€€€¼¼‘¥É•Ñ¥½¹É½µA…ÑÑ•É¸‘•±¥‰•É…Ñ•±äÁÉ•Ù•¹ÑÌÑ¡•´™É½´É•…Ñ¥¹œÑÉ…‘•Ì¸(€€€€€€€¥˜¡½¹™±¥ÑÌ¥É•ÑÕÉ¸€‰I9P€ˆ­Àì((€€€€€€€€¼¼5Õ±Ñ¤µ…¹‘±”¹…µ•Ì¹••µ•…¹¥¹™Õ°…É••µ•¹Ð™É½´Ñ¡”¹•Ý•ÍÐÍ•ÅÕ•¹”ì(€€€€€€€€¼¼„Í¥¹±”Ý¥‘”½±½ÕÉ•…¹‘±”µÕÍÐ¹½Ðµ…ÍÅÕ•É…‘”…ÌÑ¡É•”…¹‘±•Ì¸(€€€€€€€‰½½±•…¸µÕ±Ñ¤õÀ¹½¹Ñ…¥¹Ì ‰Q!I]!%QM=1%ILˆ¤ñðÀ¹½¹Ñ…¥¹Ì ‰Q!I	1,I=]Lˆ¤(€€€€€€€€€€€€€€€ñðÀ¹½¹Ñ…¥¹Ì ‰Q!I	U11%M ˆ¤ñðÀ¹½¹Ñ…¥¹Ì ‰Q!I	I%M ˆ¤ì(€€€€€€€¥˜¡µÕ±Ñ¤€˜˜€¡5…Ñ ¹…‰Ì¡ÍÑ…Ñ”¹Í•ÅÕ•¹•	¥…Ì¤ð¸ÈÐ(€€€€€€€€€€€€€€€ñð€¡‰Õ±±¥Í €˜˜ÍÑ…Ñ”¹É••¹ÑQÝ½¥É•Ñ¥½¸ðô¸Àà¤(€€€€€€€€€€€€€€€ñð€¡‰•…É¥Í €˜˜ÍÑ…Ñ”¹É••¹ÑQÝ½¥É•Ñ¥½¸øô´¸Àà¤¤¥É•ÑÕÉ¸€‰9=P=9%I5ˆì((€€€€€€€€¼¼I•Ù•ÉÍ…°Í¡…Á•Ì¹••™½±±½ÜµÑ¡É½Õ ™É½´µ½É”Ñ¡…¸½¹”¹•Ý•ÍÐÉ•¥½¸¸(€€€€€€€€¼¼±½¹”½ÁÁ½Í¥Ñ”…¹‘±”¥Ì±…‰•±±•…Ì…Ý…¥Ñ¥¹œ½¹™¥Éµ…Ñ¥½¸¥¹ÍÑ•…½˜(€€€€€€€€¼¼‰•¥¹œ…‘Ù•ÉÑ¥Í•…Ì„½µÁ±•Ñ•É•Ù•ÉÍ…°Í•ÑÕÀ¸(€€€€€€€‰½½±•…¸É•Ù•ÉÍ…°õÀ¹½¹Ñ…¥¹Ì ‰!55Hˆ¤ñðÀ¹½¹Ñ…¥¹Ì ‰M!==Q%9MQHˆ¤(€€€€€€€€€€€€€€€ñðÀ¹½¹Ñ…¥¹Ì ‰!9%958ˆ¤ñðÀ¹½¹Ñ…¥¹Ì ‰9U1%9ˆ¤(€€€€€€€€€€€€€€€ñðÀ¹½¹Ñ…¥¹Ì ‰5=I9%9MQHˆ¤ñðÀ¹½¹Ñ…¥¹Ì ‰Y9%9MQHˆ¤(€€€€€€€€€€€€€€€ñðÀ¹½¹Ñ…¥¹Ì ‰A%I%9ˆ¤ñðÀ¹½¹Ñ…¥¹Ì ‰I,1=Uˆ¤(€€€€€€€€€€€€€€€ñðÀ¹½¹Ñ…¥¹Ì ‰Q]iHˆ¤ñðÀ¹½¹Ñ…¥¹Ì ‰Q!I%9M%ˆ¤(€€€€€€€€€€€€€€€ñðÀ¹½¹Ñ…¥¹Ì ‰Q!I=UQM%ˆ¤ñðÀ¹½¹Ñ…¥¹Ì ‰I=91d=)$ˆ¤(€€€€€€€€€€€€€€€ñðÀ¹½¹Ñ…¥¹Ì ‰IYMQ=9=)$ˆ¤ì(€€€€€€€¥˜¡É•Ù•ÉÍ…°€˜˜€ ¡‰Õ±±¥Í €˜˜ÍÑ…Ñ”¹É••¹ÑQÝ½¥É•Ñ¥½¸ðô¸ÄÐ¤(€€€€€€€€€€€€€€€ñð€¡‰•…É¥Í €˜˜ÍÑ…Ñ”¹É••¹ÑQÝ½¥É•Ñ¥½¸øô´¸ÄÐ¤¤¥É•ÑÕÉ¸€‰]%Q%9=9%I5Q%=8ˆì(€€€€€€€É•ÑÕÉ¸Àì(€€€ô((€€€€¼¨¨I•™É•Í Á…¥È½Ñ¥µ•™É…µ”½¸•Ù•ÉäÍ…¸ìÍ½µ”…¹Ù…Ì‰É½­•ÉÌ‘¼¹½Ð•µ¥Ð„(€€€€€¨É•±¥…‰±”…•ÍÍ¥‰¥±¥Ñä•Ù•¹ÐÝ¡•¸Ñ¡•¥È…ÍÍ•Ð‘É½Á‘½Ý¸¡…¹•Ì¸€¨¼(€€€ÁÉ¥Ù…Ñ”‰½½±•…¸É•™É•Í¡•Ñ•Ñ•‘½¹Ñ•áÐ ¥ì(€€€€€€€•ÍÍ¥‰¥±¥Ñå9½‘•%¹™¼É½½Ðõ¹Õ±°ì(€€€€€€€ÑÉåì(€€€€€€€€€€€É½½Ðõ•ÑI½½Ñ%¹Ñ¥Ù•]¥¹‘½Ü ¤ì(€€€€€€€€€€€¥˜¡É½½Ðôõ¹Õ±°¥É•ÑÕÉ¸™…±Í”ì(€€€€€€€€€€€¡…ÉM•ÅÕ•¹”É½½ÑA…­…”õÉ½½Ð¹•ÑA…­…•9…µ” ¤ì(€€€€€€€€€€€¥˜¡É½½ÑA…­…”„õ¹Õ±°€˜˜•ÑA…­…•9…µ” ¤¹½¹Ñ•¹ÑÅÕ…±Ì¡É½½ÑA…­…”¤¥É•ÑÕÉ¸™…±Í”ì(€€€€€€€€€€€MÑÉ¥¹œÙ¥Í¥‰±”õ½±±•ÑY¥Í¥‰±•Q•áÐ¡É½½Ð¤ì(€€€€€€€€€€€MÑÉ¥¹œÍåµ‰½°õ‘•Ñ•ÑMåµ‰½°¡Ù¥Í¥‰±”¤±Ñ¥µ•™É…µ”õ‘•Ñ•ÑQ¥µ•™É…µ”¡Ù¥Í¥‰±”¤ì(€€€€€€€€€€€±½¹œ¹½ÜõMåÍÑ•´¹ÕÉÉ•¹ÑQ¥µ•5¥±±¥Ì ¤ì(€€€€€€€€€€€M¡…É•‘AÉ•™•É•¹•Ì¹‘¥Ñ½È•‘¥ÐõÁÉ•™Ì¹•‘¥Ð ¤ì(€€€€€€€€€€€¥˜¡Íåµ‰½°„õ¹Õ±°˜˜…Íåµ‰½°¹¥ÍµÁÑä ¤¥ì(€€€€€€€€€€€€€€€MÑÉ¥¹œÁÉ•Ù¥½ÕÌõÁÉ•™Ì¹•ÑMÑÉ¥¹œ ‰‘•Ñ•Ñ•‘}…ÍÍ•Ðˆ°ˆˆ¤ì(€€€€€€€€€€€€€€€¥˜ …Íåµ‰½°¹•ÅÕ…±Ì¡ÁÉ•Ù¥½ÕÌ¤¥ì(€€€€€€€€€€€€€€€€€€€¥˜¡ÑÉ…¥¹¥¹œ„õ¹Õ±°¥ÑÉ…¥¹¥¹œ¹±•…ÉA•¹‘¥¹œ ¤ì(€€€€€€€€€€€€€€€€€€€¥˜¡‰½…É‘1•…É¹•È„õ¹Õ±°¥‰½…É‘1•…É¹•È¹±•…ÉA•¹‘¥¹œ ¤ì(€€€€€€€€€€€€€€€€€€€¥˜¡±•…É¹•È„õ¹Õ±°¥±•…É¹•È¹Í•ÑÍÍ•Ð¡Íåµ‰½°¤ì(€€€€€€€€€€€€€€€€€€€¥˜¡Í•±™•¥Í¥½¸„õ¹Õ±°¥Í•±™•¥Í¥½¸¹É•Í•Ð ¤ì(€€€€€€€€€€€€€€€€€€€¥˜¡ÅÕ¥­•¥Í¥½¸„õ¹Õ±°¥ÅÕ¥­•¥Í¥½¸¹É•Í•Ð ¤ì(€€€€€€€€€€€€€€€€€€€±…ÍÑ±•ÉÑ-•äôˆˆì(€€€€€€€€€€€€€€€ô(€€€€€€€€€€€€€€€•‘¥Ð¹ÁÕÑMÑÉ¥¹œ ‰‘•Ñ•Ñ•‘}…ÍÍ•Ðˆ±Íåµ‰½°¤¹ÁÕÑ1½¹œ ‰‘•Ñ•Ñ•‘}…ÍÍ•Ñ}Ñ¥µ”ˆ±¹½Ü¤ì(€€€€€€€€€€€ô(€€€€€€€€€€€¥˜¡Ñ¥µ•™É…µ”„õ¹Õ±°˜˜…Ñ¥µ•™É…µ”¹¥ÍµÁÑä ¤¥•‘¥Ð¹ÁÕÑMÑÉ¥¹œ ‰‘•Ñ•Ñ•‘}Ñ¥µ•™É…µ”ˆ±Ñ¥µ•™É…µ”¤(€€€€€€€€€€€€€€€€€€€€¹ÁÕÑMÑÉ¥¹œ ‰±…ÍÑ}Ù…±¥‘}Ñ¥µ•™É…µ”ˆ±Ñ¥µ•™É…µ”¤¹ÁÕÑ1½¹œ ‰‘•Ñ•Ñ•‘}Ñ¥µ•™É…µ•}Ñ¥µ”ˆ±¹½Ü¤ì(€€€€€€€€€€€‰½½±•…¸Ù•É¥™¥•õÍåµ‰½°„õ¹Õ±°˜˜…Íåµ‰½°¹¥ÍµÁÑä ¤ì(€€€€€€€€€€€¥˜ …Ù•É¥™¥•¥ì(€€€€€€€€€€€€€€€€¼¼9•Ù•È­••ÀÁÉ•Í•¹Ñ¥¹œ½È±•…É¹¥¹œ……¥¹ÍÐ„ÁÉ•Ù¥½ÕÍ±äÍ••¸(€€€€€€€€€€€€€€€€¼¼Á…¥ÈÝ¡•¸Ñ¡”ÕÉÉ•¹Ð‰É½­•ÈÍÉ••¸…¹¹½ÐÙ•É¥™ä¥ÑÌÍåµ‰½°¸(€€€€€€€€€€€€€€€•‘¥Ð¹É•µ½Ù” ‰‘•Ñ•Ñ•‘}…ÍÍ•Ðˆ¤¹É•µ½Ù” ‰‘•Ñ•Ñ•‘}…ÍÍ•Ñ}Ñ¥µ”ˆ¤ì(€€€€€€€€€€€€€€€¥˜¡ÑÉ…¥¹¥¹œ„õ¹Õ±°¥ÑÉ…¥¹¥¹œ¹±•…ÉA•¹‘¥¹œ ¤ì(€€€€€€€€€€€€€€€¥˜¡‰½…É‘1•…É¹•È„õ¹Õ±°¥‰½…É‘1•…É¹•È¹±•…ÉA•¹‘¥¹œ ¤ì(€€€€€€€€€€€€€€€¥˜¡Í•±™•¥Í¥½¸„õ¹Õ±°¥Í•±™•¥Í¥½¸¹É•Í•Ð ¤ì(€€€€€€€€€€€€€€€¥˜¡ÅÕ¥­•¥Í¥½¸„õ¹Õ±°¥ÅÕ¥­•¥Í¥½¸¹É•Í•Ð ¤ì(€€€€€€€€€€€€€€€±…ÍÑ±•ÉÑ-•äôˆˆì(€€€€€€€€€€€ô(€€€€€€€€€€€•‘¥Ð¹…ÁÁ±ä ¤ì(€€€€€€€€€€€É•ÑÕÉ¸Ù•É¥™¥•ì(€€€€€€€õ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íõ™¥¹…±±åì(€€€€€€€€€€€¥˜¡É½½Ð„õ¹Õ±°¥ÑÉåíÉ½½Ð¹É•å±” ¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€€€€€ô(€€€€€€€É•ÑÕÉ¸™…±Í”ì(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥Í¡½ÝA…¥É9½ÑY•É¥™¥• ¥ì(€€€€€€€µ…¥¸¹Á½ÍÐ  ¤´ùì(€€€€€€€€€€€¥˜ …Í…¹¹•É¹…‰±• ¤¥É•ÑÕÉ¸ì(€€€€€€€€€€€Í¡½ÝMÑ…ÑÕÍ=Ù•É±…ä ‰Idˆ¤ì(€€€€€€€€€€€±•…ÉMÑÉ½¹M¥¹…±…É ¤ì(€€€€€€€€€€€…¹•±M¥¹…±9½Ñ¥™¥…Ñ¥½¸ ¤ì(€€€€€€€€€€€¥˜¡ÅÕ¥­•¥Í¥½¸„õ¹Õ±°¥ÅÕ¥­•¥Í¥½¸¹É•Í•Ð ¤ì(€€€€€€€€€€€±…ÍÑEÕ¥­A½ÁÕÁ-•äôˆˆì(€€€€€€€€€€€¥˜¡ÍÑ…ÑÕÍQ•áÐ„õ¹Õ±°¥ì(€€€€€€€€€€€€€€€ÍÑ…ÑÕÍQ•áÐ¹Í•ÑQ•áÐ ‰A%HQQ%=8II=HƒŠPIM8IEU%Iˆ¤ì(€€€€€€€€€€€€€€€ÍÑ…ÑÕÍQ•áÐ¹Í•ÑQ•áÑ½±½È¡½±½È¹Éˆ ÈÔÄ°ÄäÄ°ÌØ¤¤ì(€€€€€€€€€€€ô(€€€€€€€€€€€¥˜¡±¥Ù•Q•áÐ„õ¹Õ±°¥ì(€€€€€€€€€€€€€€€±¥Ù•Q•áÐ¹Í•ÑQ•áÐ ‰$1%YƒŠˆA%HQQ%=8II=Hˆ¤ì(€€€€€€€€€€€€€€€±¥Ù•Q•áÐ¹Í•ÑQ•áÑ½±½È¡½±½È¹Éˆ ÈÔÄ°ÄäÄ°ÌØ¤¤ì(€€€€€€€€€€€ô(€€€€€€€€€€€¥˜¡‰…¹¹•É5½¹¥Ñ½É¹…‰±• ¤¥ì(€€€€€€€€€€€€€€€¥˜¡Ñ½Á%¹™½Q•áÐôõ¹Õ±°¥É•…Ñ•Q½Á%¹™½	…È ¤ì(€€€€€€€€€€€€€€€¥˜¡Ñ½Á%¹™½Q•áÐ„õ¹Õ±°¥ì(€€€€€€€€€€€€€€€€€€€Ñ½Á%¹™½Q•áÐ¹Í•ÑQ•áÐ ‰9aP91è9<QIq¸ˆ¬(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰A%H5%M5Q ƒŠPIM8IEU%Iq¸ˆ¬(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰-••ÀÑ¡”ÕÉÉ•¹Ð‰É½­•ÈÁ…¥È¹…µ”Ù¥Í¥‰±”ˆ¤ì(€€€€€€€€€€€€€€€€€€€Ñ½Á%¹™½Q•áÐ¹Í•ÑQ•áÑ½±½È¡½±½È¹Éˆ ÈÔÀ°ÈÀÐ°ÈÄ¤¤ì(€€€€€€€€€€€€€€€ô(€€€€€€€€€€€ô(€€€€€€€ô¤ì(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥Í¡½ÝM¥¹…±…É¡M¥¹…±I•ÍÕ±ÐÈ±¥¹Ð¡½É¥é½¸±¥¹ÐŒ¥ì(€€€€€€€¥˜¡¥¹™½…É‘A¥¹¹•¥É•ÑÕÉ¸ì(€€€€€€€¥˜¡Ý´ôõ¹Õ±°¥É•ÑÕÉ¸ì(€€€€€€€¥˜¡Í¥¹…±…É‘5…¹Õ…±±½Í•=¹±ä€˜˜Í¥¹…±…É„õ¹Õ±°¥É•ÑÕÉ¸ì(€€€€€€€¥˜¡Í¥¹…±…É„õ¹Õ±°¥ì(€€€€€€€€€€€ÑÉåíÝ´¹É•µ½Ù•Y¥•Ü¡Í¥¹…±…É¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€€€€€€€€€Í¥¹…±…Éõ¹Õ±°ì(€€€€€€€ô((€€€€€€€1¥¹•…É1…å½ÕÐ…Éõ¹•Ü1¥¹•…É1…å½ÕÐ¡Ñ¡¥Ì¤ì(€€€€€€€…É¹Í•Ñ=É¥•¹Ñ…Ñ¥½¸¡1¥¹•…É1…å½ÕÐ¹YIQ%0¤ì(€€€€€€€…É¹Í•ÑA…‘‘¥¹œ¡‘À ÄØ¤±‘À ÄÈ¤±‘À ÄØ¤±‘À ÄÈ¤¤ì(€€€€€€€É…‘¥•¹ÑÉ…Ý…‰±”‰œõ¹•ÜÉ…‘¥•¹ÑÉ…Ý…‰±” ¤ì(€€€€€€€‰œ¹Í•Ñ½±½È¡½±½È¹…Éˆ ÈÐÔ°ÄÄ°Äà°ÌÈ¤¤ì(€€€€€€€‰œ¹Í•Ñ½É¹•ÉI…‘¥ÕÌ¡‘À Äà¤¤ì(€€€€€€€‰œ¹Í•ÑMÑÉ½­”¡‘À È¤±Œ¤ì(€€€€€€€…É¹Í•Ñ	…­É½Õ¹¡‰œ¤ì((€€€€€€€Q•áÑY¥•ÜÑ¥Ñ±”õ¹•ÜQ•áÑY¥•Ü¡Ñ¡¥Ì¤ì(€€€€€€€MÑÉ¥¹œÍ¥¹…±Q¥µ”õ±½¬¡ÁÉ•‘¥Ñ¥½¹Q…É•ÑMÑ…ÉÑ5Ì¤ì(€€€€€€€¥¹ÐÁÐô‰	Udˆ¹•ÅÕ…±Ì¡È¹±…‰•°¤ýÈ¹‰ÕåAÉ½‰…‰¥±¥ÑäéÈ¹Í•±±AÉ½‰…‰¥±¥Ñäì(€€€€€€€=¹±¥¹•1•…É¹•È¹Y•É¥™¥…Ñ¥½¸Ù•É¥™¥•õ±•…É¹•È¹Ù•É¥™¥…Ñ¥½¸¡5…Ñ ¹µ…à À±5…Ñ ¹µ¥¸ Ð±¡½É¥é½¸´Ä¤¤¤ì(€€€€€€€Ñ¥Ñ±”¹Í•ÑQ•áÐ¡½¹™¥‘•¹•Q¥Ñ±”¡ÁÐ¤¬ˆƒŠˆ€ˆ­È¹±…‰•°¬ˆ€€ˆ­ÁÐ¬ˆ”ˆ¤ì(€€€€€€€Ñ¥Ñ±”¹Í•ÑQ•áÑM¥é” ÈÈ¤ì(€€€€€€€Ñ¥Ñ±”¹Í•ÑQåÁ•™…”¡¹Õ±°±QåÁ•™…”¹	=1¤ì(€€€€€€€Ñ¥Ñ±”¹Í•ÑQ•áÑ½±½È¡Œ¤ì(€€€€€€€…É¹…‘‘Y¥•Ü¡Ñ¥Ñ±”¤ì((€€€€€€€¥¹Ð¡¤õ5…Ñ ¹µ…à À±5…Ñ ¹µ¥¸ Ð±¡½É¥é½¸´Ä¤¤ì(€€€€€€€¥¹ÐÉ••¹Ñ8õ±•…É¹•È¹É••¹Ñ½Õ¹Ð¡¡¤¤ì(€€€€€€€MÑÉ¥¹œÉ••¹ÐõÉ••¹Ñ8ðÔü‰]%8IQè1I9%9ˆè ‰I9P]%8IQ€ˆ­±•…É¹•È¹É••¹ÑÕÉ…åAÐ¡¡¤¤¬ˆ”€ ˆ­É••¹Ñ8¬ˆ¤ˆ¤ì(€€€€€€€Q•áÑY¥•ÜÁ…¥Èõ¹•ÜQ•áÑY¥•Ü¡Ñ¡¥Ì¤ì(€€€€€€€MÑÉ¥¹œÁÉ•ÍÍÕÉ”õÁÉ•ÍÍÕÉ•1¥¹”¡È¤ì(€€€€€€€Á…¥È¹Í•ÑQ•áÐ¡ÕÉÉ•¹ÑÍÍ•Ð ¤¬ˆƒŠˆ4ˆ­¡½É¥é½¸¬ˆƒŠˆQI€ˆ­ÑÉ…‘•ÕÉ…Ñ¥½¸¡¡½É¥é½¸¤¬‰q¸ˆ­È¹±…‰•°¬ˆ9QId€ˆ­Í¥¹…±Q¥µ”¬‰q¸ˆ­•¹ÑÉåMÑ…Ñ”¡MåÍÑ•´¹ÕÉÉ•¹ÑQ¥µ•5¥±±¥Ì ¤±ÁÉ•‘¥Ñ¥½¹Q…É•ÑMÑ…ÉÑ5Ì¤¬‰q¹MQU@è€ˆ­Í¡½ÉÑM•ÑÕÀ¡È¤¬¡ÁÉ•ÍÍÕÉ”¹¥ÍµÁÑä ¤üˆˆè‰q¸ˆ­ÁÉ•ÍÍÕÉ”¤¬‰q¸ˆ­Ù•É¥™¥•¹ÍÕµµ…Éä ¤¬‰q¸ˆ­É••¹Ð¤ì(€€€€€€€Á…¥È¹Í•ÑQ•áÑM¥é” ÄÌ¤ì(€€€€€€€Á…¥È¹Í•ÑQ•áÑ½±½È¡½±½È¹]!%Q¤ì(€€€€€€€…É¹…‘‘Y¥•Ü¡Á…¥È¤ì((€€€€€€€1¥¹•…É1…å½ÕÐ…Ñ¥½¹Ìõ¹•Ü1¥¹•…É1…å½ÕÐ¡Ñ¡¥Ì¤ì(€€€€€€€…Ñ¥½¹Ì¹Í•Ñ=É¥•¹Ñ…Ñ¥½¸¡1¥¹•…É1…å½ÕÐ¹!=I%i=9Q0¤ì(€€€€€€€	ÕÑÑ½¸½Á•¸õ¹•Ü	ÕÑÑ½¸¡Ñ¡¥Ì¤ì½Á•¸¹Í•ÑQ•áÐ ‰=A8ˆ¤ì½Á•¸¹Í•Ñ±±…ÁÌ¡™…±Í”¤ì(€€€€€€€	ÕÑÑ½¸±½Í”õ¹•Ü	ÕÑÑ½¸¡Ñ¡¥Ì¤ì±½Í”¹Í•ÑQ•áÐ ‰1=Mˆ¤ì±½Í”¹Í•Ñ±±…ÁÌ¡™…±Í”¤ì(€€€€€€€…Ñ¥½¹Ì¹…‘‘Y¥•Ü¡½Á•¸±¹•Ü1¥¹•…É1…å½ÕÐ¹1…å½ÕÑA…É…µÌ À±‘À ÐØ¤°Ä¤¤ì(€€€€€€€…Ñ¥½¹Ì¹…‘‘Y¥•Ü¡±½Í”±¹•Ü1¥¹•…É1…å½ÕÐ¹1…å½ÕÑA…É…µÌ À±‘À ÐØ¤°Ä¤¤ì(€€€€€€€…É¹…‘‘Y¥•Ü¡…Ñ¥½¹Ì¤ì((€€€€€€€½Á•¸¹Í•Ñ=¹±¥­1¥ÍÑ•¹•È¡Ø´ùì(€€€€€€€€€€€%¹Ñ•¹Ð¥¸õ¹•Ü%¹Ñ•¹Ð¡Ñ¡¥Ì±5…¥¹Ñ¥Ù¥Ñä¹±…ÍÌ¤ì(€€€€€€€€€€€¥¸¹…‘‘±…Ì¡%¹Ñ•¹Ð¹1}Q%Y%Qe}9]}QM-ñ%¹Ñ•¹Ð¹1}Q%Y%Qe}M%91}Q=@¤ì(€€€€€€€€€€€ÍÑ…ÉÑÑ¥Ù¥Ñä¡¥¸¤ì(€€€€€€€ô¤ì(€€€€€€€±½Í”¹Í•Ñ=¹±¥­1¥ÍÑ•¹•È¡Ø´ùì(€€€€€€€€€€€ÑÉåíÝ´¹É•µ½Ù•Y¥•Ü¡…É¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€€€€€€€€€¥˜¡Í¥¹…±…Éôõ…É¥íÍ¥¹…±…Éõ¹Õ±°íÍ¥¹…±…É‘5…¹Õ…±±½Í•=¹±äõ™…±Í”íô(€€€€€€€€€€€…¹•±M¥¹…±9½Ñ¥™¥…Ñ¥½¸ ¤ì(€€€€€€€ô¤ì((€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ±Àõ¹•Ü]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ (€€€€€€€€€€€€€€€‘À ÈÜÔ¤±]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹]IA}=9Q9P°(€€€€€€€€€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹QeA}MM%	%1%Qe}=YI1d°(€€€€€€€€€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹1}9=Q}=UM	1ð(€€€€€€€€€€€€€€€€€€€€€€€]¥¹‘½Ý5…¹…•È¹1…å½ÕÑA…É…µÌ¹1}9=Q}Q=U!}5=0°(€€€€€€€€€€€€€€€A¥á•±½Éµ…Ð¹QI9M1U9P¤ì(€€€€€€€±À¹É…Ù¥ÑäõÉ…Ù¥Ñä¹9QI}!=I%i=9Q1ñÉ…Ù¥Ñä¹Q=@ì(€€€€€€€±À¹äõ‘À ÄÜÀ¤ì(€€€€€€€ÑÉåíÝ´¹…‘‘Y¥•Ü¡…É±±À¤íÍ¥¹…±…Éõ…ÉíÍ¥¹…±…É‘5…¹Õ…±±½Í•=¹±äõÑÉÕ”íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥µ…å‰•9½Ñ¥™ä¡M¥¹…±I•ÍÕ±ÐÈ±¥¹Ð¡½É¥é½¸¥ì(€€€€€€€¥˜¡Èôõ¹Õ±°ñð€„ ‰	Udˆ¹•ÅÕ…±Ì¡È¹±…‰•°¥ñð‰M10ˆ¹•ÅÕ…±Ì¡È¹±…‰•°¤¤¥É•ÑÕÉ¸ì(€€€€€€€¥¹ÐÁÐô‰	Udˆ¹•ÅÕ…±Ì¡È¹±…‰•°¤ýÈ¹‰ÕåAÉ½‰…‰¥±¥ÑäéÈ¹Í•±±AÉ½‰…‰¥±¥Ñäì(€€€€€€€¥˜¡ÁÐðÜÀ¥É•ÑÕÉ¸ì(€€€€€€€=¹±¥¹•1•…É¹•È¹Y•É¥™¥…Ñ¥½¸Ù•É¥™¥•õ±•…É¹•È¹Ù•É¥™¥…Ñ¥½¸¡5…Ñ ¹µ…à À±5…Ñ ¹µ¥¸ Ð±¡½É¥é½¸´Ä¤¤¤ì((€€€€€€€€¼¼M¡½Ü5•‘¥Õ´¡…¹”…¹ÍÑÉ½¹•È¹½Ñ¥™¥…Ñ¥½¹Ì¸M½Õ¹É•µ…¥¹Ì(€€€€€€€€¼¼¥¹‘•Á•¹‘•¹Ñ±ä½¹ÑÉ½±±•‰äÑ¡”ÕÍ•ÈÌÍ•±•Ñ•Ñ¡É•Í¡½±¸(€€€€€€€¥¹Ð…±•ÉÑQ¡É•Í¡½±õ5…Ñ ¹µ…à ÜÀ±5…Ñ ¹µ¥¸ äÀ°(€€€€€€€€€€€€€€€ÁÉ•™Ìôõ¹Õ±°üàÔéÁÉ•™Ì¹•Ñ%¹Ð ‰Í½Õ¹‘}…±•ÉÑ}Ñ¡É•Í¡½±ˆ°àÔ¤¤¤ì(€€€€€€€‰½½±•…¸Í½Õ¹‘¹…‰±•õÁÉ•™Ìôõ¹Õ±°ñðÁÉ•™Ì¹•Ñ	½½±•…¸ ‰Í½Õ¹‘}…±•ÉÑÌˆ±ÑÉÕ”¤ì(€€€€€€€‰½½±•…¸Á±…åM½Õ¹õÍ½Õ¹‘¹…‰±•€˜˜ÁÐøõ…±•ÉÑQ¡É•Í¡½±ì((€€€€€€€±½¹œ¹½ÜõMåÍÑ•´¹ÕÉÉ•¹ÑQ¥µ•5¥±±¥Ì ¤ì(€€€€€€€±½¹œ…¹‘±•-•äõÁÉ•‘¥Ñ¥½¹Q…É•ÑMÑ…ÉÑ5ÌøÁ0ýÁÉ•‘¥Ñ¥½¹Q…É•ÑMÑ…ÉÑ5Ìè¡¹½Ü¼ØÁ|ÀÀÁ0¤¨ØÁ|ÀÀÁ0ì(€€€€€€€MÑÉ¥¹œ­•äõÕÉÉ•¹ÑÍÍ•Ð ¤¬‰ðˆ­È¹±…‰•°¬‰ñ4ˆ­¡½É¥é½¸¬‰ðˆ­…¹‘±•-•äì(€€€€€€€¥˜¡­•ä¹•ÅÕ…±Ì¡±…ÍÑ±•ÉÑ-•ä¤¥É•ÑÕÉ¸ì(€€€€€€€±…ÍÑ±•ÉÑ-•äõ­•äì±…ÍÑ±•ÉÑÐõ¹½Üì((€€€€€€€±…ÍÑ9½Ñ¥™¥•‘M¥¹…°õÈì(€€€€€€€±…ÍÑ9½Ñ¥™¥•‘!½É¥é½¸õ¡½É¥é½¸ì((€€€€€€€%¹Ñ•¹ÐÍ¡½Ý%¹Ñ•¹Ðõ¹•Ü%¹Ñ•¹Ð¡Ñ¡¥Ì±M¥¹…±¥Íµ¥ÍÍI••¥Ù•È¹±…ÍÌ¤ì(€€€€€€€Í¡½Ý%¹Ñ•¹Ð¹Í•ÑÑ¥½¸ ‰Í…¹¹•È¹M!=]}M%90ˆ¤ì(€€€€€€€A•¹‘¥¹%¹Ñ•¹Ð½Á•¸õA•¹‘¥¹%¹Ñ•¹Ð¹•Ñ	É½…‘…ÍÐ¡Ñ¡¥Ì°ÈÄ±Í¡½Ý%¹Ñ•¹Ð°(€€€€€€€€€€€€€€€A•¹‘¥¹%¹Ñ•¹Ð¹1}UAQ}UII9QñA•¹‘¥¹%¹Ñ•¹Ð¹1}%55UQ	1¤ì((€€€€€€€%¹Ñ•¹Ð±½Í•%¹Ñ•¹Ðõ¹•Ü%¹Ñ•¹Ð¡Ñ¡¥Ì±M¥¹…±¥Íµ¥ÍÍI••¥Ù•È¹±…ÍÌ¤ì(€€€€€€€±½Í•%¹Ñ•¹Ð¹Í•ÑÑ¥½¸ ‰Í…¹¹•È¹%M5%MM}M%90ˆ¤ì(€€€€€€€A•¹‘¥¹%¹Ñ•¹Ð±½Í”õA•¹‘¥¹%¹Ñ•¹Ð¹•Ñ	É½…‘…ÍÐ¡Ñ¡¥Ì°ÈÈ±±½Í•%¹Ñ•¹Ð°(€€€€€€€€€€€€€€€A•¹‘¥¹%¹Ñ•¹Ð¹1}UAQ}UII9QñA•¹‘¥¹%¹Ñ•¹Ð¹1}%55UQ	1¤ì((€€€€€€€¥¹Ð¥½¸ô‰	Udˆ¹•ÅÕ…±Ì¡È¹±…‰•°¤ý…¹‘É½¥¹H¹‘É…Ý…‰±”¹…ÉÉ½Ý}ÕÁ}™±½…Ðé…¹‘É½¥¹H¹‘É…Ý…‰±”¹…ÉÉ½Ý}‘½Ý¹}™±½…Ðì(€€€€€€€9½Ñ¥™¥…Ñ¥½¸¹	Õ¥±‘•È¸õ	Õ¥±¹YIM%=8¹M-}%9PøôÈØ(€€€€€€€€€€€€€€€€ý¹•Ü9½Ñ¥™¥…Ñ¥½¸¹	Õ¥±‘•È¡Ñ¡¥Ì±Á±…åM½Õ¹ýM%91} éM%91}A=AUA} ¤(€€€€€€€€€€€€€€€€é¹•Ü9½Ñ¥™¥…Ñ¥½¸¹	Õ¥±‘•È¡Ñ¡¥Ì¤ì(€€€€€€€¥¹Ð¡¤õ5…Ñ ¹µ…à À±5…Ñ ¹µ¥¸ Ð±¡½É¥é½¸´Ä¤¤ì(€€€€€€€¥¹ÐÉ¸õ±•…É¹•È¹É••¹Ñ½Õ¹Ð¡¡¤¤ì(€€€€€€€MÑÉ¥¹œÝÈõÉ¸ðÔü‰]%8IQ1I9%9ˆè ‰]%8IQ€ˆ­±•…É¹•È¹É••¹ÑÕÉ…åAÐ¡¡¤¤¬ˆ”ˆ¤ì(€€€€€€€MÑÉ¥¹œ™Õ±±%¹™¼õÕÉÉ•¹ÑÍÍ•Ð ¤¬ˆƒŠˆ4ˆ­¡½É¥é½¸¬ˆƒŠˆQI€ˆ­ÑÉ…‘•ÕÉ…Ñ¥½¸¡¡½É¥é½¸¤¬‰q¸ˆ¬(€€€€€€€€€€€€€€€È¹±…‰•°¬ˆ9QId€ˆ­±½¬¡ÁÉ•‘¥Ñ¥½¹Q…É•ÑMÑ…ÉÑ5Ì¤¬ˆƒŠˆ€ˆ­•¹ÑÉåMÑ…Ñ”¡¹½Ü±ÁÉ•‘¥Ñ¥½¹Q…É•ÑMÑ…ÉÑ5Ì¤¬‰q¸ˆ¬(€€€€€€€€€€€€€€€€‰MQU@è€ˆ­Í¡½ÉÑM•ÑÕÀ¡È¤¬¡ÁÉ•ÍÍÕÉ•1¥¹”¡È¤¹¥ÍµÁÑä ¤üˆˆè‰q¸ˆ­ÁÉ•ÍÍÕÉ•1¥¹”¡È¤¤¬‰q¸ˆ­Ù•É¥™¥•¹ÍÕµµ…Éä ¤¬‰q¸ˆ­ÝÈì(€€€€€€€¸¹Í•ÑMµ…±±%½¸¡¥½¸¤(€€€€€€€€€€€€€€€€¹Í•Ñ½¹Ñ•¹ÑQ¥Ñ±”¡½¹™¥‘•¹•Q¥Ñ±”¡ÁÐ¤¬ˆƒŠˆ€ˆ­È¹±…‰•°¬ˆ€ˆ­ÁÐ¬ˆ”ˆ¤(€€€€€€€€€€€€€€€€¹Í•Ñ½¹Ñ•¹ÑQ•áÐ¡ÕÉÉ•¹ÑÍÍ•Ð ¤¬ˆƒŠˆ4ˆ­¡½É¥é½¸¬ˆƒŠˆ€ˆ­ÝÈ¤(€€€€€€€€€€€€€€€€¹Í•ÑMÑå±”¡¹•Ü9½Ñ¥™¥…Ñ¥½¸¹	¥Q•áÑMÑå±” ¤¹‰¥Q•áÐ¡™Õ±±%¹™¼¤¤(€€€€€€€€€€€€€€€€¹Í•ÑÕÑ½…¹•°¡™…±Í”¤(€€€€€€€€€€€€€€€€¹Í•Ñ=¹½¥¹œ¡ÑÉÕ”¤(€€€€€€€€€€€€€€€€¹Í•Ñ½¹Ñ•¹Ñ%¹Ñ•¹Ð¡½Á•¸¤(€€€€€€€€€€€€€€€€¹Í•ÑAÉ¥½É¥Ñä¡9½Ñ¥™¥…Ñ¥½¸¹AI%=I%Qe}!% ¤(€€€€€€€€€€€€€€€€¹Í•Ñ…Ñ•½Éä¡9½Ñ¥™¥…Ñ¥½¸¹Q=Ie}I=559Q%=8¤(€€€€€€€€€€€€€€€€¹Í•Ñ=¹±å±•ÉÑ=¹”¡ÑÉÕ”¤(€€€€€€€€€€€€€€€€¹Í•Ñ•™…Õ±ÑÌ¡	Õ¥±¹YIM%=8¹M-}%9PðÈØ€˜˜Á±…åM½Õ¹(€€€€€€€€€€€€€€€€€€€€€€€€ü€¡9½Ñ¥™¥…Ñ¥½¸¹U1Q}M=U9ñ9½Ñ¥™¥…Ñ¥½¸¹U1Q}Y%	IQ¤€è€À¤(€€€€€€€€€€€€€€€€¹…‘‘Ñ¥½¸¡¹•Ü9½Ñ¥™¥…Ñ¥½¸¹Ñ¥½¸¹	Õ¥±‘•È À°‰=A8ˆ±½Á•¸¤¹‰Õ¥± ¤¤(€€€€€€€€€€€€€€€€¹…‘‘Ñ¥½¸¡¹•Ü9½Ñ¥™¥…Ñ¥½¸¹Ñ¥½¸¹	Õ¥±‘•È À°‰1=Mˆ±±½Í”¤¹‰Õ¥± ¤¤ì(€€€€€€€Á½ÍÑ9½Ñ¥™¥…Ñ¥½¸¡¸¹‰Õ¥± ¤¤ì(€€€ô((€€€€¼¨¨1¥Ù”Ù•É¥™¥•Í¥¹…±ÌÕÍ•Ñ¼Í¡½Ü½¹±ä…¸½Ù•É±…ä¸9½Ñ¥™ä¹‘É½¥Ñ½¼¸€¨¼(€€€ÁÉ¥Ù…Ñ”Ù½¥µ…å‰•9½Ñ¥™åEÕ¥¬¡EÕ¥­•¥Í¥½¹¹¥¹”¹I•ÍÕ±ÐÅÕ¥¬±¥¹Ð¡½É¥é½¸°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€=¹±¥¹•1•…É¹•È¹Y•É¥™¥…Ñ¥½¸Ù•É¥™¥•¥ì(€€€€€€€¥˜¡ÅÕ¥¬ôõ¹Õ±°ñð€…ÅÕ¥¬¹¡¥¡¡…¹”ñð(€€€€€€€€€€€€€€€€„ ‰	Udˆ¹•ÅÕ…±Ì¡ÅÕ¥¬¹±…‰•°¥ñð‰M10ˆ¹•ÅÕ…±Ì¡ÅÕ¥¬¹±…‰•°¤¤¥É•ÑÕÉ¸ì(€€€€€€€¥¹ÐÁÐõÅÕ¥¬¹Í½É”ì(€€€€€€€¥˜¡ÁÐðÜÀ¥É•ÑÕÉ¸ì(€€€€€€€¥¹Ð…±•ÉÑQ¡É•Í¡½±õ5…Ñ ¹µ…à ÜÀ±5…Ñ ¹µ¥¸ äÀ°(€€€€€€€€€€€€€€€ÁÉ•™Ìôõ¹Õ±°üàÔéÁÉ•™Ì¹•Ñ%¹Ð ‰Í½Õ¹‘}…±•ÉÑ}Ñ¡É•Í¡½±ˆ°àÔ¤¤¤ì(€€€€€€€‰½½±•…¸Í½Õ¹‘¹…‰±•õÁÉ•™Ìôõ¹Õ±°ñðÁÉ•™Ì¹•Ñ	½½±•…¸ ‰Í½Õ¹‘}…±•ÉÑÌˆ±ÑÉÕ”¤ì(€€€€€€€‰½½±•…¸Á±…åM½Õ¹õÍ½Õ¹‘¹…‰±•€˜˜ÁÐøõ…±•ÉÑQ¡É•Í¡½±ì(€€€€€€€±½¹œ¹½ÜõMåÍÑ•´¹ÕÉÉ•¹ÑQ¥µ•5¥±±¥Ì ¤ì(€€€€€€€±½¹œÍ±½Ðõ¹½Ü¼¡5…Ñ ¹µ…à Ä±¡½É¥é½¸¤¨ØÁ|ÀÀÁ0¤ì(€€€€€€€MÑÉ¥¹œ­•äõÕÉÉ•¹ÑÍÍ•Ð ¤¬‰ñ1%Yðˆ­ÅÕ¥¬¹±…‰•°¬‰ñ4ˆ­¡½É¥é½¸¬‰ðˆ­Í±½Ðì(€€€€€€€¥˜¡­•ä¹•ÅÕ…±Ì¡±…ÍÑ±•ÉÑ-•ä¤¥É•ÑÕÉ¸ì(€€€€€€€±…ÍÑ±•ÉÑ-•äõ­•äì±…ÍÑ±•ÉÑÐõ¹½Üì((€€€€€€€%¹Ñ•¹Ð½Á•¹%¹Ñ•¹Ðõ¹•Ü%¹Ñ•¹Ð¡Ñ¡¥Ì±5…¥¹Ñ¥Ù¥Ñä¹±…ÍÌ¤ì(€€€€€€€½Á•¹%¹Ñ•¹Ð¹…‘‘±…Ì¡%¹Ñ•¹Ð¹1}Q%Y%Qe}9]}QM-ñ%¹Ñ•¹Ð¹1}Q%Y%Qe}M%91}Q=@¤ì(€€€€€€€A•¹‘¥¹%¹Ñ•¹Ð½Á•¸õA•¹‘¥¹%¹Ñ•¹Ð¹•ÑÑ¥Ù¥Ñä¡Ñ¡¥Ì°ÌÄ±½Á•¹%¹Ñ•¹Ð°(€€€€€€€€€€€€€€€A•¹‘¥¹%¹Ñ•¹Ð¹1}UAQ}UII9QñA•¹‘¥¹%¹Ñ•¹Ð¹1}%55UQ	1¤ì(€€€€€€€%¹Ñ•¹Ð±½Í•%¹Ñ•¹Ðõ¹•Ü%¹Ñ•¹Ð¡Ñ¡¥Ì±M¥¹…±¥Íµ¥ÍÍI••¥Ù•È¹±…ÍÌ¤ì(€€€€€€€±½Í•%¹Ñ•¹Ð¹Í•ÑÑ¥½¸ ‰Í…¹¹•È¹%M5%MM}M%90ˆ¤ì(€€€€€€€A•¹‘¥¹%¹Ñ•¹Ð±½Í”õA•¹‘¥¹%¹Ñ•¹Ð¹•Ñ	É½…‘…ÍÐ¡Ñ¡¥Ì°ÌÈ±±½Í•%¹Ñ•¹Ð°(€€€€€€€€€€€€€€€A•¹‘¥¹%¹Ñ•¹Ð¹1}UAQ}UII9QñA•¹‘¥¹%¹Ñ•¹Ð¹1}%55UQ	1¤ì(€€€€€€€¥¹Ð¥½¸ô‰	Udˆ¹•ÅÕ…±Ì¡ÅÕ¥¬¹±…‰•°¤ý…¹‘É½¥¹H¹‘É…Ý…‰±”¹…ÉÉ½Ý}ÕÁ}™±½…Ðé…¹‘É½¥¹H¹‘É…Ý…‰±”¹…ÉÉ½Ý}‘½Ý¹}™±½…Ðì(€€€€€€€9½Ñ¥™¥…Ñ¥½¸¹	Õ¥±‘•È¸õ	Õ¥±¹YIM%=8¹M-}%9PøôÈØ(€€€€€€€€€€€€€€€€ý¹•Ü9½Ñ¥™¥…Ñ¥½¸¹	Õ¥±‘•È¡Ñ¡¥Ì±Á±…åM½Õ¹ýM%91} éM%91}A=AUA} ¤(€€€€€€€€€€€€€€€€é¹•Ü9½Ñ¥™¥…Ñ¥½¸¹	Õ¥±‘•È¡Ñ¡¥Ì¤ì(€€€€€€€MÑÉ¥¹œ‘•Ñ…¥±ÌõÕÉÉ•¹ÑÍÍ•Ð ¤¬ˆƒŠˆ4ˆ­¡½É¥é½¸¬ˆƒŠˆQI€ˆ­ÑÉ…‘•ÕÉ…Ñ¥½¸¡¡½É¥é½¸¤¬‰q¸ˆ¬(€€€€€€€€€€€€€€€ÅÕ¥¬¹É•…Í½¸¬‰q¸ˆ­Ù•É¥™¥•¹ÍÕµµ…Éä ¤¬‰q¹1¥Ù”Í¥¹…°ì½¹™¥É´…Ð…¹‘±”±½Í”¸ˆì(€€€€€€€¸¹Í•ÑMµ…±±%½¸¡¥½¸¤(€€€€€€€€€€€€€€€€¹Í•Ñ½¹Ñ•¹ÑQ¥Ñ±”¡½¹™¥‘•¹•Q¥Ñ±”¡ÁÐ¤¬ˆƒŠˆ€ˆ­ÅÕ¥¬¹±…‰•°¬ˆ€ˆ­ÁÐ¬ˆ”ˆ¤(€€€€€€€€€€€€€€€€¹Í•Ñ½¹Ñ•¹ÑQ•áÐ¡ÕÉÉ•¹ÑÍÍ•Ð ¤¬ˆƒŠˆ4ˆ­¡½É¥é½¸¬ˆƒŠˆ1%YYI%%ˆ¤(€€€€€€€€€€€€€€€€¹Í•ÑMÑå±”¡¹•Ü9½Ñ¥™¥…Ñ¥½¸¹	¥Q•áÑMÑå±” ¤¹‰¥Q•áÐ¡‘•Ñ…¥±Ì¤¤(€€€€€€€€€€€€€€€€¹Í•ÑÕÑ½…¹•°¡™…±Í”¤¹Í•Ñ=¹½¥¹œ¡ÑÉÕ”¤¹Í•Ñ½¹Ñ•¹Ñ%¹Ñ•¹Ð¡½Á•¸¤(€€€€€€€€€€€€€€€€¹Í•ÑAÉ¥½É¥Ñä¡9½Ñ¥™¥…Ñ¥½¸¹AI%=I%Qe}!% ¤(€€€€€€€€€€€€€€€€¹Í•Ñ…Ñ•½Éä¡9½Ñ¥™¥…Ñ¥½¸¹Q=Ie}I=559Q%=8¤(€€€€€€€€€€€€€€€€¹Í•Ñ=¹±å±•ÉÑ=¹”¡ÑÉÕ”¤(€€€€€€€€€€€€€€€€¹Í•Ñ•™…Õ±ÑÌ¡	Õ¥±¹YIM%=8¹M-}%9PðÈØ€˜˜Á±…åM½Õ¹(€€€€€€€€€€€€€€€€€€€€€€€€ü¡9½Ñ¥™¥…Ñ¥½¸¹U1Q}M=U9ñ9½Ñ¥™¥…Ñ¥½¸¹U1Q}Y%	IQ¤èÀ¤(€€€€€€€€€€€€€€€€¹…‘‘Ñ¥½¸¡¹•Ü9½Ñ¥™¥…Ñ¥½¸¹Ñ¥½¸¹	Õ¥±‘•È À°‰=A8ˆ±½Á•¸¤¹‰Õ¥± ¤¤(€€€€€€€€€€€€€€€€¹…‘‘Ñ¥½¸¡¹•Ü9½Ñ¥™¥…Ñ¥½¸¹Ñ¥½¸¹	Õ¥±‘•È À°‰1=Mˆ±±½Í”¤¹‰Õ¥± ¤¤ì(€€€€€€€Á½ÍÑ9½Ñ¥™¥…Ñ¥½¸¡¸¹‰Õ¥± ¤¤ì(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥Á½ÍÑ9½Ñ¥™¥…Ñ¥½¸¡9½Ñ¥™¥…Ñ¥½¸¹½Ñ¥™¥…Ñ¥½¸¥ì(€€€€€€€¥˜¡	Õ¥±¹YIM%=8¹M-}%9PøôÌÌ€˜˜(€€€€€€€€€€€€€€€¡•­M•±™A•Éµ¥ÍÍ¥½¸¡…¹‘É½¥¹5…¹¥™•ÍÐ¹Á•Éµ¥ÍÍ¥½¸¹A=MQ}9=Q%%Q%=9L¤(€€€€€€€€€€€€€€€€€€€€€€€€„õ…¹‘É½¥¹½¹Ñ•¹Ð¹Á´¹A…­…•5…¹…•È¹AI5%MM%=9}I9Q¥ì(€€€€€€€€€€€¥˜¡ÁÉ•™Ì„õ¹Õ±°¥ÁÉ•™Ì¹•‘¥Ð ¤¹ÁÕÑMÑÉ¥¹œ ‰¹½Ñ¥™¥…Ñ¥½¹}ÍÑ…ÑÕÌˆ°‰A•Éµ¥ÍÍ¥½¸É•ÅÕ¥É•ˆ¤¹…ÁÁ±ä ¤ì(€€€€€€€€€€€É•ÑÕÉ¸ì(€€€€€€€ô(€€€€€€€9½Ñ¥™¥…Ñ¥½¹5…¹…•È¹´õ•ÑMåÍÑ•µM•ÉÙ¥”¡9½Ñ¥™¥…Ñ¥½¹5…¹…•È¹±…ÍÌ¤ì(€€€€€€€¥˜¡¹´ôõ¹Õ±°ñð€…¹´¹…É•9½Ñ¥™¥…Ñ¥½¹Í¹…‰±• ¤¥ì(€€€€€€€€€€€¥˜¡ÁÉ•™Ì„õ¹Õ±°¥ÁÉ•™Ì¹•‘¥Ð ¤¹ÁÕÑMÑÉ¥¹œ ‰¹½Ñ¥™¥…Ñ¥½¹}ÍÑ…ÑÕÌˆ°‰	±½­•¥¸¹‘É½¥Í•ÑÑ¥¹Ìˆ¤¹…ÁÁ±ä ¤ì(€€€€€€€€€€€É•ÑÕÉ¸ì(€€€€€€€ô(€€€€€€€ÑÉåì(€€€€€€€€€€€¹´¹¹½Ñ¥™ä¡M%91}%±¹½Ñ¥™¥…Ñ¥½¸¤ì(€€€€€€€€€€€¥˜¡ÁÉ•™Ì„õ¹Õ±°¥ÁÉ•™Ì¹•‘¥Ð ¤¹ÁÕÑMÑÉ¥¹œ ‰¹½Ñ¥™¥…Ñ¥½¹}ÍÑ…ÑÕÌˆ°‰]½É­¥¹œˆ¤¹…ÁÁ±ä ¤ì(€€€€€€€õ…Ñ ¡á•ÁÑ¥½¸”¥ì(€€€€€€€€€€€¥˜¡ÁÉ•™Ì„õ¹Õ±°¥ÁÉ•™Ì¹•‘¥Ð ¤¹ÁÕÑMÑÉ¥¹œ ‰¹½Ñ¥™¥…Ñ¥½¹}ÍÑ…ÑÕÌˆ°‰ÉÉ½Èè€ˆ­”¹•Ñ±…ÍÌ ¤¹•ÑM¥µÁ±•9…µ” ¤¤¹…ÁÁ±ä ¤ì(€€€€€€€ô(€€€ô((€€€ÁÕ‰±¥ŒÍÑ…Ñ¥Œ‰½½±•…¸Í•¹‘Q•ÍÑ9½Ñ¥™¥…Ñ¥½¸ ¥ì(€€€€€€€ÕÑ½Måµ‰½±•ÍÍ¥‰¥±¥ÑåM•ÉÙ¥”Ìõ¥¹ÍÑ…¹”ì(€€€€€€€¥˜¡Ìôõ¹Õ±°¥É•ÑÕÉ¸™…±Í”ì(€€€€€€€Ì¹µ…¥¸¹Á½ÍÐ  ¤´ùì(€€€€€€€€€€€Ì¹É•…Ñ•9½Ñ¥™¥…Ñ¥½¹¡…¹¹•° ¤ì(€€€€€€€€€€€%¹Ñ•¹Ð½Á•¹%¹Ñ•¹Ðõ¹•Ü%¹Ñ•¹Ð¡Ì±5…¥¹Ñ¥Ù¥Ñä¹±…ÍÌ¤ì(€€€€€€€€€€€½Á•¹%¹Ñ•¹Ð¹…‘‘±…Ì¡%¹Ñ•¹Ð¹1}Q%Y%Qe}9]}QM-ñ%¹Ñ•¹Ð¹1}Q%Y%Qe}M%91}Q=@¤ì(€€€€€€€€€€€A•¹‘¥¹%¹Ñ•¹Ð½Á•¸õA•¹‘¥¹%¹Ñ•¹Ð¹•ÑÑ¥Ù¥Ñä¡Ì°ÐÄ±½Á•¹%¹Ñ•¹Ð°(€€€€€€€€€€€€€€€€€€€A•¹‘¥¹%¹Ñ•¹Ð¹1}UAQ}UII9QñA•¹‘¥¹%¹Ñ•¹Ð¹1}%55UQ	1¤ì(€€€€€€€€€€€9½Ñ¥™¥…Ñ¥½¸¹	Õ¥±‘•Èˆõ	Õ¥±¹YIM%=8¹M-}%9PøôÈØ(€€€€€€€€€€€€€€€€€€€€ý¹•Ü9½Ñ¥™¥…Ñ¥½¸¹	Õ¥±‘•È¡Ì±M%91} ¤é¹•Ü9½Ñ¥™¥…Ñ¥½¸¹	Õ¥±‘•È¡Ì¤ì(€€€€€€€€€€€ˆ¹Í•ÑMµ…±±%½¸¡…¹‘É½¥¹H¹‘É…Ý…‰±”¹¥}‘¥…±½}¥¹™¼¤(€€€€€€€€€€€€€€€€€€€€¹Í•Ñ½¹Ñ•¹ÑQ¥Ñ±” ‰hÍ¥¹…°¹½Ñ¥™¥…Ñ¥½¹Ì…É”Ý½É­¥¹œˆ¤(€€€€€€€€€€€€€€€€€€€€¹Í•Ñ½¹Ñ•¹ÑQ•áÐ ‰e½ÔÝ¥±°‰”¹½Ñ¥™¥•Ý¡•¸„Ù•É¥™¥•	Ud½ÈM10Í¥¹…°¥ÌÉ•…‘ä¸ˆ¤(€€€€€€€€€€€€€€€€€€€€¹Í•ÑMÑå±”¡¹•Ü9½Ñ¥™¥…Ñ¥½¸¹	¥Q•áÑMÑå±” ¤¹‰¥Q•áÐ (€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰Q•ÍÐÍÕ•ÍÍ™Õ°¸-••À¹‘É½¥¹½Ñ¥™¥…Ñ¥½¹Ì•¹…‰±•…¹‘¼¹½ÐÉ•ÍÑÉ¥Ð…¹‘±•M…¹¹•È‰…ÑÑ•ÉäÕÍ”¸ˆ¤¤(€€€€€€€€€€€€€€€€€€€€¹Í•Ñ½¹Ñ•¹Ñ%¹Ñ•¹Ð¡½Á•¸¤¹Í•ÑÕÑ½…¹•°¡ÑÉÕ”¤(€€€€€€€€€€€€€€€€€€€€¹Í•ÑAÉ¥½É¥Ñä¡9½Ñ¥™¥…Ñ¥½¸¹AI%=I%Qe}!% ¤ì(€€€€€€€€€€€Ì¹Á½ÍÑ9½Ñ¥™¥…Ñ¥½¸¡ˆ¹‰Õ¥± ¤¤ì(€€€€€€€ô¤ì(€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì(€€€ô((€€€ÁÉ¥Ù…Ñ”MÑÉ¥¹œÑÉ…‘•ÕÉ…Ñ¥½¸¡¥¹Ð¡½É¥é½¸¥ì(€€€€€€€¥¹Ðµ¥¹ÕÑ•Ìõ5…Ñ ¹µ…à Ä±5…Ñ ¹µ¥¸ Ô±¡½É¥é½¸¤¤ì(€€€€€€€É•ÑÕÉ¸€¡µ¥¹ÕÑ•Ì¨ØÀ¤¬‰Ìˆì(€€€ô((€€€ÁÉ¥Ù…Ñ”MÑÉ¥¹œ½¹™¥‘•¹•Q¥Ñ±”¡¥¹ÐÍ½É”¥ì(€€€€€€€¥˜¡Í½É”øôäÀ¥É•ÑÕÉ¸€‰YId!% =9%9ˆì(€€€€€€€¥˜¡Í½É”øôàÔ¥É•ÑÕÉ¸€‰!% !9ˆì(€€€€€€€¥˜¡Í½É”øôÜÀ¥É•ÑÕÉ¸€‰5%U4!9ˆì(€€€€€€€É•ÑÕÉ¸€‰9<QIˆì(€€€ô((€€€ÁÕ‰±¥ŒÍÑ…Ñ¥ŒÙ½¥Í¡½Ý1…ÍÑM¥¹…±=Ù•É±…ä ¥ì(€€€€€€€ÕÑ½Måµ‰½±•ÍÍ¥‰¥±¥ÑåM•ÉÙ¥”Ìõ¥¹ÍÑ…¹”ì(€€€€€€€¥˜¡Ì„õ¹Õ±°¥Ì¹µ…¥¸¹Á½ÍÐ  ¤´ùì(€€€€€€€€€€€¥˜¡Ì¹±…ÍÑ9½Ñ¥™¥•‘M¥¹…°„õ¹Õ±°¥ì(€€€€€€€€€€€€€€€¥¹Ð½±½Èô‰	Udˆ¹•ÅÕ…±Ì¡Ì¹±…ÍÑ9½Ñ¥™¥•‘M¥¹…°¹±…‰•°¤(€€€€€€€€€€€€€€€€€€€€€€€€ý½±½È¹Éˆ ÜÐ°ÈÈÈ°ÄÈà¤é½±½È¹Éˆ ÈÐà°ÄÄÌ°ÄÄÌ¤ì(€€€€€€€€€€€€€€€Ì¹Í¡½ÝM¥¹…±…É¡Ì¹±…ÍÑ9½Ñ¥™¥•‘M¥¹…°±Ì¹±…ÍÑ9½Ñ¥™¥•‘!½É¥é½¸±½±½È¤ì(€€€€€€€€€€€ô(€€€€€€€ô¤ì(€€€ô((€€€ÁÕ‰±¥ŒÍÑ…Ñ¥ŒÙ½¥‘¥Íµ¥ÍÍM¥¹…±=Ù•É±…ä ¥ì(€€€€€€€ÕÑ½Måµ‰½±•ÍÍ¥‰¥±¥ÑåM•ÉÙ¥”Ìõ¥¹ÍÑ…¹”ì(€€€€€€€¥˜¡Ì„õ¹Õ±°¥Ì¹µ…¥¸¹Á½ÍÐ  ¤´ùì(€€€€€€€€€€€Ì¹¥¹™½…É‘A¥¹¹•õ™…±Í”ì(€€€€€€€€€€€¥˜¡Ì¹Í¥¹…±…É„õ¹Õ±°¥ì(€€€€€€€€€€€€€€€ÑÉåíÌ¹Ý´¹É•µ½Ù•Y¥•Ü¡Ì¹Í¥¹…±…É¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€€€€€€€€€€€€€Ì¹Í¥¹…±…Éõ¹Õ±°ì(€€€€€€€€€€€€€€€Ì¹Í¥¹…±…É‘5…¹Õ…±±½Í•=¹±äõ™…±Í”ì(€€€€€€€€€€€ô(€€€€€€€€€€€Ì¹…¹•±M¥¹…±9½Ñ¥™¥…Ñ¥½¸ ¤ì(€€€€€€€ô¤ì(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥…¹•±M¥¹…±9½Ñ¥™¥…Ñ¥½¸ ¥ì(€€€€€€€ÑÉåí•ÑMåÍÑ•µM•ÉÙ¥”¡9½Ñ¥™¥…Ñ¥½¹5…¹…•È¹±…ÍÌ¤¹…¹•°¡M%91}%¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íô(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥É•…Ñ•9½Ñ¥™¥…Ñ¥½¹¡…¹¹•° ¥ì(€€€€€€€¥˜¡	Õ¥±¹YIM%=8¹M-}%9PøôÈØ¥ì(€€€€€€€€€€€9½Ñ¥™¥…Ñ¥½¹¡…¹¹•° õ¹•Ü9½Ñ¥™¥…Ñ¥½¹¡…¹¹•° (€€€€€€€€€€€€€€€€€€€M%91} °‰!¥ µ½¹™¥‘•¹”	Ud€¼M10Í½Õ¹…±•ÉÑÌˆ±9½Ñ¥™¥…Ñ¥½¹5…¹…•È¹%5A=IQ9}!% ¤ì(€€€€€€€€€€€ ¹Í•Ñ•ÍÉ¥ÁÑ¥½¸ ‰M½Õ¹…¹Ù¥‰É…Ñ¥½¸½¹±äÝ¡•¸Ñ¡”½µÁ±•Ñ•µ…¹‘±”Í¥¹…°É•…¡•ÌÑ¡”Í•±•Ñ•½¹™¥‘•¹”Ñ¡É•Í¡½±ˆ¤ì(€€€€€€€€€€€ ¹•¹…‰±•Y¥‰É…Ñ¥½¸¡ÑÉÕ”¤ì(€€€€€€€€€€€ ¹Í•ÑY¥‰É…Ñ¥½¹A…ÑÑ•É¸¡¹•Ü±½¹muìÀ°ÄàÀ°äÀ°ÈÈÁô¤ì(€€€€€€€€€€€UÉ¤Í½Õ¹õI¥¹Ñ½¹•5…¹…•È¹•Ñ•™…Õ±ÑUÉ¤¡I¥¹Ñ½¹•5…¹…•È¹QeA}9=Q%%Q%=8¤ì(€€€€€€€€€€€Õ‘¥½ÑÑÉ¥‰ÕÑ•Ì…ÑÑÉÌõ¹•ÜÕ‘¥½ÑÑÉ¥‰ÕÑ•Ì¹	Õ¥±‘•È ¤(€€€€€€€€€€€€€€€€€€€€¹Í•ÑUÍ…”¡Õ‘¥½ÑÑÉ¥‰ÕÑ•Ì¹UM}9=Q%%Q%=9}Y9P¤(€€€€€€€€€€€€€€€€€€€€¹Í•Ñ½¹Ñ•¹ÑQåÁ”¡Õ‘¥½ÑÑÉ¥‰ÕÑ•Ì¹=9Q9Q}QeA}M=9%%Q%=8¤(€€€€€€€€€€€€€€€€€€€€¹‰Õ¥± ¤ì(€€€€€€€€€€€ ¹Í•ÑM½Õ¹¡Í½Õ¹±…ÑÑÉÌ¤ì(€€€€€€€€€€€9½Ñ¥™¥…Ñ¥½¹5…¹…•È¹´õ•ÑMåÍÑ•µM•ÉÙ¥”¡9½Ñ¥™¥…Ñ¥½¹5…¹…•È¹±…ÍÌ¤ì(€€€€€€€€€€€¹´¹É•…Ñ•9½Ñ¥™¥…Ñ¥½¹¡…¹¹•°¡ ¤ì((€€€€€€€€€€€9½Ñ¥™¥…Ñ¥½¹¡…¹¹•°Á½ÁÕÀõ¹•Ü9½Ñ¥™¥…Ñ¥½¹¡…¹¹•° (€€€€€€€€€€€€€€€€€€€M%91}A=AUA} °‰ÕÑ½µ…Ñ¥Œ	Ud€¼M10Á½ÁÕÁÌˆ±9½Ñ¥™¥…Ñ¥½¹5…¹…•È¹%5A=IQ9}!% ¤ì(€€€€€€€€€€€Á½ÁÕÀ¹Í•Ñ•ÍÉ¥ÁÑ¥½¸ ‰Y¥Í¥‰±”½µÁ±•Ñ•µ…¹‘±”	Ud€¼M10Á½ÁÕÁÌ™½È½¹™¥‘•¹”Í½É•Ì½˜€ÜÀ”½È¡¥¡•Èˆ¤ì(€€€€€€€€€€€Á½ÁÕÀ¹•¹…‰±•Y¥‰É…Ñ¥½¸¡™…±Í”¤ì(€€€€€€€€€€€Á½ÁÕÀ¹Í•ÑM½Õ¹¡¹Õ±°±¹Õ±°¤ì(€€€€€€€€€€€¹´¹É•…Ñ•9½Ñ¥™¥…Ñ¥½¹¡…¹¹•°¡Á½ÁÕÀ¤ì(€€€€€€€ô(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥ÕÁ‘…Ñ•Måµ‰½±Q•áÐ ¥ì(€€€€€€€¥˜¡Íåµ‰½±Q•áÐôõ¹Õ±°¥É•ÑÕÉ¸ì(€€€€€€€MÑÉ¥¹œ„õÕÉÉ•¹ÑÍÍ•Ð ¤ì(€€€€€€€MÑÉ¥¹œÑ˜õÕÉÉ•¹ÑQ¥µ•™É…µ•1…‰•° ¤ì(€€€€€€€MÑÉ¥¹œµ½‘”õÁÉ•™Ìôõ¹Õ±°ü‰UQ<ˆéÁÉ•™Ì¹•ÑMÑÉ¥¹œ ‰Ñ¥µ•™É…µ•}µ½‘”ˆ°‰UQ<ˆ¤ì(€€€€€€€±½¹œÑÐõÁÉ•™Ìôõ¹Õ±°üÁ0éÁÉ•™Ì¹•Ñ1½¹œ ‰‘•Ñ•Ñ•‘}Ñ¥µ•™É…µ•}Ñ¥µ”ˆ°Á0¤ì(€€€€€€€‰½½±•…¸™…±±‰…¬ô‰UQ<ˆ¹•ÅÕ…±Í%¹½É•…Í”¡µ½‘”¤€˜˜(€€€€€€€€€€€€€€€€¡ÑÐôôÁ0ñðMåÍÑ•´¹ÕÉÉ•¹ÑQ¥µ•5¥±±¥Ì ¤µÑÐøÌÀ¨ØÁ|ÀÀÁ0¤ì(€€€€€€€Íåµ‰½±Q•áÐ¹Í•ÑQ•áÐ  ‰UQ=}!IPˆ¹•ÅÕ…±Ì¡„¤ü‰UQ<¡…ÉÐˆé„¤¬ˆƒŠˆ€ˆ­Ñ˜¬¡™…±±‰…¬üˆ™…±±‰…¬ˆèˆˆ¤¤ì(€€€ô((€€€ÁÉ¥Ù…Ñ”MÑÉ¥¹œÕÉÉ•¹ÑQ¥µ•™É…µ•1…‰•° ¥ì(€€€€€€€¥˜¡ÁÉ•™Ìôõ¹Õ±°¥ÁÉ•™Ìõ•ÑM¡…É•‘AÉ•™•É•¹•Ì¡AIL±5=}AI%YQ¤ì(€€€€€€€MÑÉ¥¹œµ½‘”õÁÉ•™Ì¹•ÑMÑÉ¥¹œ ‰Ñ¥µ•™É…µ•}µ½‘”ˆ°‰UQ<ˆ¤¹Ñ½UÁÁ•É…Í”¡1½…±”¹UL¤ì(€€€€€€€¥˜ „‰UQ<ˆ¹•ÅÕ…±Ì¡µ½‘”¤¥É•ÑÕÉ¸µ½‘”ì(€€€€€€€MÑÉ¥¹œÑ˜õÁÉ•™Ì¹•ÑMÑÉ¥¹œ ‰‘•Ñ•Ñ•‘}Ñ¥µ•™É…µ”ˆ°ˆˆ¤¹Ñ½UÁÁ•É…Í”¡1½…±”¹UL¤ì(€€€€€€€±½¹œÐõÁÉ•™Ì¹•Ñ1½¹œ ‰‘•Ñ•Ñ•‘}Ñ¥µ•™É…µ•}Ñ¥µ”ˆ°Á0¤ì(€€€€€€€¥˜¡Ñ˜¹µ…Ñ¡•Ì ‰5lÄ´Õtˆ¤€˜˜MåÍÑ•´¹ÕÉÉ•¹ÑQ¥µ•5¥±±¥Ì ¤µÐðôÌÀ¨ØÁ|ÀÀÁ0¥É•ÑÕÉ¸Ñ˜ì(€€€€€€€MÑÉ¥¹œ±…ÍÐõÁÉ•™Ì¹•ÑMÑÉ¥¹œ ‰±…ÍÑ}Ù…±¥‘}Ñ¥µ•™É…µ”ˆ°‰4Äˆ¤¹Ñ½UÁÁ•É…Í”¡1½…±”¹UL¤ì(€€€€€€€€¼¼UQ<µÕÍÐ¹•Ù•ÈÍ¥±•¹Ñ±äÍÑ½À¸]¡•¸„…¹Ù…Ìµ‰…Í•‰É½­•È¡¥‘•Ì¥ÑÌ(€€€€€€€€¼¼Ñ¥µ•™É…µ”™É½´•ÍÍ¥‰¥±¥Ñä°­••ÀÍ…¹¹¥¹œÝ¥Ñ Ñ¡”±…ÍÐ­¹½Ý¸Ù…±Õ”ì(€€€€€€€€¼¼4Ä¥ÌÑ¡”•áÁ±¥¥Ð™¥ÉÍÐµÉÕ¸™…±±‰…¬…¹¥ÌÍ¡½Ý¸¥¸Ñ¡”U$…Ì™…±±‰…¬¸(€€€€€€€É•ÑÕÉ¸±…ÍÐ¹µ…Ñ¡•Ì ‰5lÄ´Õtˆ¤ý±…ÍÐè‰4Äˆì(€€€ô((€€€ÁÉ¥Ù…Ñ”¥¹ÐÍ•±•Ñ•‘!½É¥é½¹%¹‘•à ¥ì(€€€€€€€MÑÉ¥¹œÑ˜õÕÉÉ•¹ÑQ¥µ•™É…µ•1…‰•° ¤ì(€€€€€€€¥˜¡Ñ˜¹µ…Ñ¡•Ì ‰5lÄ´Õtˆ¤¥É•ÑÕÉ¸Ñ˜¹¡…ÉÐ Ä¤´œÄœì(€€€€€€€É•ÑÕÉ¸€´Äì(€€€ô((€€€ÁÉ¥Ù…Ñ”MÑÉ¥¹œÕÉÉ•¹ÑÍÍ•Ð ¥ì(€€€€€€€¥˜¡ÁÉ•™Ìôõ¹Õ±°¥ÁÉ•™Ìõ•ÑM¡…É•‘AÉ•™•É•¹•Ì¡AIL±5=}AI%YQ¤ì(€€€€€€€MÑÉ¥¹œ„õÁÉ•™Ì¹•ÑMÑÉ¥¹œ ‰‘•Ñ•Ñ•‘}…ÍÍ•Ðˆ°ˆˆ¤¹ÑÉ¥´ ¤¹Ñ½UÁÁ•É…Í”¡1½…±”¹UL¤ì(€€€€€€€±½¹œÐõÁÉ•™Ì¹•Ñ1½¹œ ‰‘•Ñ•Ñ•‘}…ÍÍ•Ñ}Ñ¥µ”ˆ°Á0¤ì(€€€€€€€€¼¼-••À½¹”±•…É¹¥¹œ¥‘•¹Ñ¥ÑäÍÑ…‰±”‘ÕÉ¥¹œ„¹½Éµ…°ÑÉ…‘¥¹œÍ•ÍÍ¥½¸¸(€€€€€€€€¼¼¹•Ü‘•Ñ•Ñ•Íåµ‰½°ÍÑ¥±°É•Á±…•Ì¥Ð¥µµ•‘¥…Ñ•±ä¸(€€€€€€€¥˜¡„¹¥ÍµÁÑä ¥ññMåÍÑ•´¹ÕÉÉ•¹ÑQ¥µ•5¥±±¥Ì ¤µÐøØÀ¨ØÁ|ÀÀÁ0¥É•ÑÕÉ¸€‰UQ=}!IPˆì(€€€€€€€É•ÑÕÉ¸„ì(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥ÁÉ½•ÍÍ1•…É¹¥¹Ñ	½Õ¹‘…Éä¡±½¹œ‰½Õ¹‘…Éä±…¹‘±•Y¥Í¥½¸¹¹…±åÍ¥Ì¹½Ü°(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹ÐÍ•±•Ñ•‘ ±M¥¹…±I•ÍÕ±Ð‘¥ÍÁ±…å•¥ì(€€€€€€€¥˜¡¹½Üôõ¹Õ±±ñð…¹½Ü¹Ù…±¥‘ññ¹½Ü¹‘•Ñ•Ñ•‘	¥¹ÌðáññÍ•±•Ñ•‘ ðÁññÍ•±•Ñ•‘ øÐ¥É•ÑÕÉ¸ì(€€€€€€€MÑÉ¥¹œ…ÍÍ•ÐõÕÉÉ•¹ÑÍÍ•Ð ¤ì(€€€€€€€±•…É¹•È¹Í•ÑÍÍ•Ð¡…ÍÍ•Ð¤ì((€€€€€€€1¥ÍÐñQÉ…¥¹¥¹MÑ½É”¹A•¹‘¥¹œøÁ•¹‘¥¹œõÑÉ…¥¹¥¹œ¹±½… ¤ì(€€€€€€€©…Ù„¹ÕÑ¥°¹ÉÉ…å1¥ÍÐñQÉ…¥¹¥¹MÑ½É”¹A•¹‘¥¹œø­••Àõ¹•Ü©…Ù„¹ÕÑ¥°¹ÉÉ…å1¥ÍÐðø ¤ì(€€€€€€€™½È¡QÉ…¥¹¥¹MÑ½É”¹A•¹‘¥¹œÀéÁ•¹‘¥¹œ¥ì(€€€€€€€€€€€€¼¼9•Ù•Èµ¥àÍåµ‰½±Ì½ÈÑ¥µ•™É…µ•Ì¸Q¡•Í”É•½É‘Ì…É”¹½Éµ…±±ä±•…É•(€€€€€€€€€€€€¼¼½¸¡…ÉÐ¡…¹•Ì°‰ÕÐÑ¡”¡•­Ìµ…­”Ñ¡”ÍÑ½É•‘…Ñ„É½‰ÕÍÐÑ¼É•ÍÑ…ÉÑÌ¸(€€€€€€€€€€€¥˜ ……ÍÍ•Ð¹•ÅÕ…±Í%¹½É•…Í”¡À¹…ÍÍ•Ð¤ñðÀ¹¡½É¥é½¸„õÍ•±•Ñ•‘ ¥ì(€€€€€€€€€€€€€€€¥˜¡À¹‘Õ•Ðù‰½Õ¹‘…Éä¥­••À¹…‘¡À¤ì(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”ì(€€€€€€€€€€€ô((€€€€€€€€€€€¥˜¡À¹‘Õ•Ðôõ‰½Õ¹‘…Éä¥ì(€€€€€€€€€€€€€€€‘½Õ‰±”‘•±Ñ„õÀ¹•¹ÑÉådµ¹½Ü¹±…Ñ•ÍÑdì€¼¼ÍÉ••¸d™…±±ÌÝ¡•¸ÁÉ¥”É¥Í•Ì(€€€€€€€€€€€€€€€¥˜¡5…Ñ ¹…‰Ì¡‘•±Ñ„¤øôÀ¸ÀÀÌÔ¥ì(€€€€€€€€€€€€€€€€€€€‰½½±•…¸ÕÀõ‘•±Ñ„øÀì(€€€€€€€€€€€€€€€€€€€‰½½±•…¸ÁÉ•‘¥Ñ•‘UÀõÀ¹‘¥ÍÁ±…å•‘	Õå@øôÀ¸Ôì(€€€€€€€€€€€€€€€€€€€‰½½±•…¸½ÉÉ•ÐõÁÉ•‘¥Ñ•‘UÀôõÕÀì(€€€€€€€€€€€€€€€€€€€±•…É¹•È¹ÕÁ‘…Ñ”¡À¹¡½É¥é½¸±À¹É…Ý	Õå@±À¹‘¥ÍÁ±…å•‘	Õå@±ÕÀ¤ì(€€€€€€€€€€€€€€€€€€€±•…É¹•È¹ÕÁ‘…Ñ•M•ÑÕÀ¡À¹¡½É¥é½¸±À¹Í•ÑÕÀ±½ÉÉ•Ð¤ì(€€€€€€€€€€€€€€€€€€€ÑÉ…¥¹¥¹œ¹…ÁÁ•¹‘I•Í½±Ù•¡À±¹½Ü¹±…Ñ•ÍÑd±ÕÀ±½ÉÉ•Ð¤ì(€€€€€€€€€€€€€€€€€€€½µµÕ¹¥Ñå1•…É¹¥¹Må¹Œ¹ÅÕ•Õ•I•Í½±Ù•¡Ñ¡¥Ì±À±ÕÀ±½ÉÉ•Ð¤ì(€€€€€€€€€€€€€€€ô(€€€€€€€€€€€€€€€€¼¼Q¥¹ä½™±…Ðµ½Ù•Ì…É”‘•±¥‰•É…Ñ•±ä±•™ÐÕ¹±…‰•±±•É…Ñ¡•ÈÑ¡…¸(€€€€€€€€€€€€€€€€¼¼™½É¥¹œ„¹½¥ÍäÝ¥¸½±½ÍÌ™É½´…¹Ñ¤µ…±¥…Í•ÍÉ••¸Á¥á•±Ì¸(€€€€€€€€€€€õ•±Í”¥˜¡À¹‘Õ•Ðù‰½Õ¹‘…Éä¥ì(€€€€€€€€€€€€€€€­••À¹…‘¡À¤ì(€€€€€€€€€€€ô(€€€€€€€€€€€€¼¼À¹‘Õ•Ð€ð‰½Õ¹‘…Éäµ•…¹ÌÑ¡”•á…Ð±½Í”Ý…Ìµ¥ÍÍ•¸¥Í…É¥Ðì(€€€€€€€€€€€€¼¼ÕÍ¥¹œ„±…Ñ•È…¹‘±”Ý½Õ±½ÉÉÕÁÐÑ¡”±•…É¹•È¸(€€€€€€€ô(€€€€€€€ÑÉ…¥¹¥¹œ¹Í…Ù”¡­••À¤ì((€€€€€€€¥¹Ðµ¥¹ÕÑ•ÌõÍ•±•Ñ•‘ ¬Äì(€€€€€€€M¥¹…±I•ÍÕ±Ð‰…Í”õ¹½Ü¹¡½É¥é½¹Ì„õ¹Õ±°€˜˜Í•±•Ñ•‘ ñ¹½Ü¹¡½É¥é½¹Ì¹±•¹Ñ (€€€€€€€€€€€€€€€€ý¹½Ü¹¡½É¥é½¹ÍmÍ•±•Ñ•‘!té¹Õ±°ì(€€€€€€€¥˜¡‰…Í”„õ¹Õ±°€˜˜‘¥ÍÁ±…å•„õ¹Õ±°¥ì(€€€€€€€€€€€€¼¼MÑ½É”É…Üµ½‘•°ÁÉ½‰…‰¥±¥Ñä™½È…±¥‰É…Ñ¥½¸°‰ÕÐÑ¡”ÁÉ½‰…‰¥±¥Ñä(€€€€€€€€€€€€¼¼…ÑÕ…±±ä‘¥ÍÁ±…å•‰äÑ¡”M•±˜µ$™½ÈÝ¥¸µÉ…Ñ”…½Õ¹Ñ¥¹œ¸(€€€€€€€€€€€M¥¹…±I•ÍÕ±ÐÍ…µÁ±”õ¹•ÜM¥¹…±I•ÍÕ±Ð (€€€€€€€€€€€€€€€€€€€‘¥ÍÁ±…å•¹±…‰•°±‘¥ÍÁ±…å•¹ÍÑÉ•¹Ñ ±‘¥ÍÁ±…å•¹Í½É”°(€€€€€€€€€€€€€€€€€€€‘¥ÍÁ±…å•¹‰ÕåAÉ½‰…‰¥±¥Ñä±‘¥ÍÁ±…å•¹Í•±±AÉ½‰…‰¥±¥Ñä°(€€€€€€€€€€€€€€€€€€€‘¥ÍÁ±…å•¹½¹™¥‘•¹”±‰…Í”¹É•¥µ”±‰…Í”¹É…Ý	ÕåAÉ½‰…‰¥±¥Ñä°(€€€€€€€€€€€€€€€€€€€‘¥ÍÁ±…å•¹Í•ÑÕÁEÕ…±¥Ñä±‘¥ÍÁ±…å•¹ÍÑÉÕÑÕÉ”±‘¥ÍÁ±…å•¹•áÁ±…¹…Ñ¥½¸¤ì(€€€€€€€€€€€MÑÉ¥¹œ±•…É¹¥¹5½‘”õÁÉ•™Ì¹•Ñ	½½±•…¸ ‰Í¡…‘½Ý}Ñ•ÍÑ¥¹}µ½‘”ˆ±™…±Í”¤(€€€€€€€€€€€€€€€€€€€€ü‰M!=\ˆè¡ÁÉ•™Ì¹•Ñ	½½±•…¸ ‰…ÕÑ½}Á…ÑÑ•É¹}Í¥¹…±Ìˆ±™…±Í”¤ü‰AQQI8ˆè‰MHˆ¤ì(€€€€€€€€€€€ÑÉ…¥¹¥¹œ¹…‘‘AÉ•‘¥Ñ¥½¸¡‰½Õ¹‘…Éä±…ÍÍ•Ð±Í•±•Ñ•‘ ±µ¥¹ÕÑ•Ì±¹½Ü¹±…Ñ•ÍÑd±Í…µÁ±”±±•…É¹¥¹5½‘”¤ì(€€€€€€€ô(€€€ô((€€€ÁÉ¥Ù…Ñ”Ù½¥É•µ½Ù•=Ù•É±…åÌ ¥ì(€€€€€€€¥˜¡Ý´„õ¹Õ±°¥ì(€€€€€€€€€€€¥˜¡Í¥¹…±…É„õ¹Õ±°¥íÑÉåíÝ´¹É•µ½Ù•Y¥•Ü¡Í¥¹…±…É¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íõô(€€€€€€€€€€€¥˜¡Ñ½Á%¹™½	…È„õ¹Õ±°¥íÑÉåíÝ´¹É•µ½Ù•Y¥•Ü¡Ñ½Á%¹™½	…È¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íõô(€€€€€€€€€€€¥˜¡ÍÑ…ÑÕÍ	½à„õ¹Õ±°¥íÑÉåíÝ´¹É•µ½Ù•Y¥•Ü¡ÍÑ…ÑÕÍ	½à¤íõ…Ñ ¡á•ÁÑ¥½¸¥¹½É•¥íõô(€€€€€€€ô(€€€€€€€Í¥¹…±…Éõ¹Õ±°ìÍ¥¹…±…É‘5…¹Õ…±±½Í•=¹±äõ™…±Í”ì¥¹™½…É‘A¥¹¹•õ™…±Í”ì¥¹™½•Ñ…¥±Ìõ¹Õ±°ìÍÑ…ÑÕÍ	½àõ¹Õ±°ìÍÑ…ÑÕÍQ•áÐõ¹Õ±°ìÍåµ‰½±Q•áÐõ¹Õ±°ìÑ¥µ¥¹Q•áÐõ¹Õ±°ì±¥Ù•Q•áÐõ¹Õ±°ì(€€€€€€€Ñ½Á%¹™½	…Èõ¹Õ±°ìÑ½Á%¹™½Q•áÐõ¹Õ±°ìÑ½Á%¹™½1Àõ¹Õ±°ì(€€€ô((€€€ÁÉ¥Ù…Ñ”MÑÉ¥¹œ½±±•ÑY¥Í¥‰±•Q•áÐ¡•ÍÍ¥‰¥±¥Ñå9½‘•%¹™¼É½½Ð¥ì(€€€€€€€MÑÉ¥¹	Õ¥±‘•È½ÕÐõ¹•ÜMÑÉ¥¹	Õ¥±‘•È ÈÀÐà¤ì(€€€€€€€ÉÉ…å•ÅÕ”ñ•ÍÍ¥‰¥±¥Ñå9½‘•%¹™¼øÄõ¹•ÜÉÉ…å•ÅÕ”ðø ¤ì(€€€€€€€Ä¹…‘¡É½½Ð¤ì¥¹ÐÙ¥Í¥Ñ•ôÀì(€€€€€€€Ý¡¥±” …Ä¹¥ÍµÁÑä ¤˜™Ù¥Í¥Ñ•ðÄÈÀÀ¥ì(€€€€€€€€€€€•ÍÍ¥‰¥±¥Ñå9½‘•%¹™¼¸õÄ¹É•µ½Ù•¥ÉÍÐ ¤ìÙ¥Í¥Ñ•¬¬ì(€€€€€€€€€€€¡…ÉM•ÅÕ•¹”Ðõ¸¹•ÑQ•áÐ ¤±õ¸¹•Ñ½¹Ñ•¹Ñ•ÍÉ¥ÁÑ¥½¸ ¤ì(€€€€€€€€€€€¥˜¡Ð„õ¹Õ±°˜™Ð¹±•¹Ñ  ¤ðôÄÈÀ¥½ÕÐ¹…ÁÁ•¹ œ€œ¤¹…ÁÁ•¹¡Ð¤ì(€€€€€€€€€€€¥˜¡„õ¹Õ±°˜™¹±•¹Ñ  ¤ðôÄÈÀ¥½ÕÐ¹…ÁÁ•¹ œ€œ¤¹…ÁÁ•¹¡¤ì(€€€€€€€€€€€¥¹Ð½Õ¹Ðõ¸¹•Ñ¡¥±‘½Õ¹Ð ¤ì(€€€€€€€€€€€™½È¡¥¹Ð¤ôÀí¤ñ½Õ¹Ðí¤¬¬¥ì(€€€€€€€€€€€€€€€•ÍÍ¥‰¥±¥Ñå9½‘•%¹™¼¡¥±õ¸¹•Ñ¡¥±¡¤¤ì(€€€€€€€€€€€€€€€¥˜¡¡¥±„õ¹Õ±°¥Ä¹…‘‘1…ÍÐ¡¡¥±¤ì(€€€€€€€€€€€ô(€€€€€€€€€€€¥˜¡¸„õÉ½½Ð¥¸¹É•å±” ¤ì(€€€€€€€ô(€€€€€€€É•ÑÕÉ¸½ÕÐ¹Ñ½MÑÉ¥¹œ ¤ì(€€€ô((€€€ÍÑ…Ñ¥ŒMÑÉ¥¹œ‘•Ñ•ÑMåµ‰½°¡MÑÉ¥¹œÑ•áÐ¥ì(€€€€€€€¥˜¡Ñ•áÐôõ¹Õ±°¥É•ÑÕÉ¸¹Õ±°ì(€€€€€€€MÑÉ¥¹œÔõÑ•áÐ¹Ñ½UÁÁ•É…Í”¡1½…±”¹UL¤¹É•Á±…” qÔÀÁÀœ°œ€œ¤(€€€€€€€€€€€€€€€€¹É•Á±…” ‹¾ò<ˆ°ˆ¼ˆ¤¹É•Á±…” ‹ŠLˆ°ˆ´ˆ¤¹É•Á±…” ‹ŠPˆ°ˆ´ˆ¤ì(€€€€€€€5…Ñ¡•È¹…µ•õ95}=Q¹µ…Ñ¡•È¡Ô¤ì(€€€€€€€¥˜¡¹…µ•¹™¥¹ ¤¥É•ÑÕÉ¸¹…µ•¹É½ÕÀ Ä¤¹Ñ½UÁÁ•É…Í”¡1½…±”¹UL¤¬ˆ=Qˆì((€€€€€€€5…Ñ¡•È´õA%H¹µ…Ñ¡•È¡Ô¤ì(€€€€€€€MÑÉ¥¹œ‰•ÍÐõ¹Õ±°ì¥¹Ð‰•ÍÑM½É”õ%¹Ñ••È¹5%9}Y1Uì(€€€€€€€Ý¡¥±”¡´¹™¥¹ ¤¥ì(€€€€€€€€€€€MÑÉ¥¹œ„õ´¹É½ÕÀ Ä¤¹Ñ½UÁÁ•É…Í”¡1½…±”¹UL¤±ˆõ´¹É½ÕÀ È¤¹Ñ½UÁÁ•É…Í”¡1½…±”¹UL¤ì(€€€€€€€€€€€¥˜¡„¹•ÅÕ…±Ì¡ˆ¤¥½¹Ñ¥¹Õ”ì(€€€€€€€€€€€¥¹ÐÌõ5…Ñ ¹µ…à À±´¹ÍÑ…ÉÐ ¤´ÈÐ¤±”õ5…Ñ ¹µ¥¸¡Ô¹±•¹Ñ  ¤±´¹•¹ ¤¬ÈÐ¤ì(€€€€€€€€€€€‰½½±•…¸½ÑŒõÔ¹ÍÕ‰ÍÑÉ¥¹œ¡Ì±”¤¹½¹Ñ…¥¹Ì ‰=Qˆ¤ì(€€€€€€€€€€€€¼¼AÉ•™•È…¸=Qµ±…‰•±±•Í•±•Ñ½È…¹Ñ¡•¸Ñ¡”•…É±¥•ÍÐÙ¥Í¥‰±”(€€€€€€€€€€€€¼¼½ÕÉÉ•¹”¸	É½­•È¡•…‘•ÉÌ…É”•áÁ½Í•‰•™½É”±½Ý•È½¹ÑÉ½±Ìì(€€€€€€€€€€€€¼¼¡½½Í¥¹œÑ¡”±…ÍÐ½ÕÉÉ•¹”…±±½Ý•¡¥‘‘•¸½ÍÑ…±”Í•±•Ñ½ÈÑ•áÐ(€€€€€€€€€€€€¼¼€¡½È…¸½±h½Ù•É±…ä½¸Í½µ”¹‘É½¥Ù•ÉÍ¥½¹Ì¤Ñ¼Ý¥¸¸(€€€€€€€€€€€¥¹ÐÍ½É”ô¡½ÑŒüÄÀÀÀÀÀèÀ¤µ´¹ÍÑ…ÉÐ ¤ì(€€€€€€€€€€€¥˜¡Í½É”øõ‰•ÍÑM½É”¥í‰•ÍÑM½É”õÍ½É”í‰•ÍÐõ„¬ˆ¼ˆ­ˆ¬¡½ÑŒüˆ=Qˆèˆˆ¤íô(€€€€€€€ô(€€€€€€€É•ÑÕÉ¸‰•ÍÐì(€€€ô((€€€ÍÑ…Ñ¥ŒMÑÉ¥¹œ‘•Ñ•ÑQ¥µ•™É…µ”¡MÑÉ¥¹œÑ•áÐ¥ì(€€€€€€€¥˜¡Ñ•áÐôõ¹Õ±°¥É•ÑÕÉ¸¹Õ±°ì(€€€€€€€MÑÉ¥¹œÔõÑ•áÐ¹Ñ½UÁÁ•É…Í”¡1½…±”¹UL¤¹É•Á±…” qÔÀÁÀœ°œ€œ¤(€€€€€€€€€€€€€€€€¹É•Á±…” ‹¾ò<ˆ°ˆ¼ˆ¤¹É•Á±…” ‹ŠLˆ°ˆ´ˆ¤¹É•Á±…” ‹ŠPˆ°ˆ´ˆ¤ì(€€€€€€€5…Ñ¡•È´õQ}4¹µ…Ñ¡•È¡Ô¤ì(€€€€€€€¥˜¡´¹™¥¹ ¤¥É•ÑÕÉ¸€‰4ˆ­´¹É½ÕÀ Ä¤ì((€€€€€€€€¼¼AÉ•™•ÈÙ…±Õ•Ì±½Í”Ñ¼¡…ÉÐ½Ñ¥µ”Ý½É‘ÌÝ¡•¸Ñ¡”‰É½­•È•áÁ½Í•Ì€Å´¼Èµ¥¸ÍÑå±”Ñ•áÐ¸(€€€€€€€5…Ñ¡•È¸õQ}5%8¹µ…Ñ¡•È¡Ô¤ì(€€€€€€€Ý¡¥±”¡¸¹™¥¹ ¤¥ì(€€€€€€€€€€€¥¹ÐÌõ5…Ñ ¹µ…à À±¸¹ÍÑ…ÉÐ ¤´ÌØ¤±”õ5…Ñ ¹µ¥¸¡Ô¹±•¹Ñ  ¤±¸¹•¹ ¤¬ÌØ¤ì(€€€€€€€€€€€MÑÉ¥¹œ…É½Õ¹õÔ¹ÍÕ‰ÍÑÉ¥¹œ¡Ì±”¤ì(€€€€€€€€€€€¥˜¡…É½Õ¹¹½¹Ñ…¥¹Ì ‰Q%5ˆ¥ññ…É½Õ¹¹½¹Ñ…¥¹Ì ‰!IPˆ¥ññ…É½Õ¹¹½¹Ñ…¥¹Ì ‰91ˆ¥ñð(€€€€€€€€€€€€€€€€€€€…É½Õ¹¹½¹Ñ…¥¹Ì ‰aA%Hˆ¥ññ…É½Õ¹¹½¹Ñ…¥¹Ì ‰%9QIY0ˆ¤¤(€€€€€€€€€€€€€€€É•ÑÕÉ¸€‰4ˆ­¸¹É½ÕÀ Ä¤ì(€€€€€€€ô(€€€€€€€É•ÑÕÉ¸¹Õ±°ì(€€€ô((€€€ÁÉ¥Ù…Ñ”¥¹Ð‘À¡¥¹ÐØ¥íÉ•ÑÕÉ¸5…Ñ ¹É½Õ¹¡Ø©•ÑI•Í½ÕÉ•Ì ¤¹•Ñ¥ÍÁ±…å5•ÑÉ¥Ì ¤¹‘•¹Í¥Ñä¤íô)ô(

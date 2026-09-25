@@ -1,0 +1,8 @@
+AZ CandleScanner v16.33
+
+- Fixes valid signals in both Pattern Mode and Safer Mode being changed back to NO TRADE by an unqualified or weak learning group.
+- Both modes now use completed-candle learning only as a bounded confidence calibration of up to +/-5 points.
+- Safer Mode keeps its strict trend, structure, timing and completed-candle confirmation filters.
+- Keeps newest closed-candle confirmation and rejects weak, neutral, stale or contradictory patterns.
+- Preserves the existing package, signing setup, local learning keys and all training history.
+- Does not reset, replace or delete existing self-learning data.

@@ -179,6 +179,33 @@ public class OnlineLearner {
     }
 
     /**
+     * Signal modes use learning as a bounded confidence calibration only.
+     *
+     * An unqualified or historically weak setup must not erase a strong,
+     * newest-closed-candle signal that already passed its mode's visual
+     * confirmation gates. Safer Mode remains strict through its independent
+     * trend, structure, timing and completed-candle checks.
+     */
+    public synchronized SignalResult applySignalModeCalibration(int horizon,SignalResult r){
+        if(r==null || !("BUY".equals(r.label)||"SELL".equals(r.label)))return r;
+        String slug=setupSlug(r.structure);
+        if(slug.isEmpty())return r;
+        String prefix=k("setup_"+slug,horizon);
+        int n=p.getInt(prefix+"_n",0),w=p.getInt(prefix+"_w",0);
+        if(n<SETUP_ACTIVATION_SAMPLES)return r;
+
+        double rate=(double)w/n;
+        int adjustment=(int)Math.round(clamp((rate-.60)*35.0,-5.0,5.0));
+        int lead="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
+        int adjusted=(int)Math.round(clamp(lead+adjustment,50,95));
+        int bp="BUY".equals(r.label)?adjusted:100-adjusted;
+        int sp="SELL".equals(r.label)?adjusted:100-adjusted;
+        return new SignalResult(r.label,Math.max(r.strength,adjusted),r.score,bp,sp,
+                r.confidence,r.regime,r.rawBuyProbability,r.setupQuality,r.structure,
+                "PATTERN LEARNING CALIBRATION "+Math.round(rate*100)+"% ("+n+") • "+r.explanation);
+    }
+
+    /**
      * Conservative evidence range for user-facing alert labels.
      *
      * Model percentages are scores, not measured win probabilities.  Alerts use
