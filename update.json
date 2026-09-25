@@ -1,9 +1,9 @@
 {
-  "version": "16.30",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.30/CandleScanner_v16.30.apk",
-  "apkName": "CandleScanner_v16.30.apk",
-  "apkSha256": "5290bba129b2a3d6c7c873304a3a9d830ba3326b67e96b4c70320f36343263a2",
-  "notes": "Banner labels older setups as RECENT PATTERN and explains NO TRADE when the move is extended. Latest completed-candle safety, MEDIUM CHANCE signals, and all learning data are preserved.",
-  "build": 98,
-  "publishedAt": "2026-09-25T15:44:00Z"
+  "version": "16.31",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.31/CandleScanner_v16.31.apk",
+  "apkName": "CandleScanner_v16.31.apk",
+  "apkSha256": "0951185eed1ccc7a26a1b09ebc263eb1055a10f20c66fb2f37b06beca36e700f",
+  "notes": "Performance accounting now records only actionable BUY/SELL signals. New outcomes are separated by OTC/LIVE market and SAFER/PATTERN/SHADOW mode. Existing learning data is preserved.",
+  "build": 99,
+  "publishedAt": "2026-09-25T19:55:01Z"
 }
