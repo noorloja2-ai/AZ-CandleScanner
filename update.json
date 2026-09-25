@@ -2,7 +2,7 @@
   "version": "16.30",
   "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.30/CandleScanner_v16.30.apk",
   "apkName": "CandleScanner_v16.30.apk",
-  "apkSha256": "PENDING_BUILD",
+  "apkSha256": "",
   "notes": "Banner labels older setups as RECENT PATTERN and explains NO TRADE when the move is extended. Latest completed-candle safety, MEDIUM CHANCE signals, and all learning data are preserved.",
   "build": 98,
   "publishedAt": "2026-09-25T15:44:00Z"
