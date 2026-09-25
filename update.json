@@ -1,9 +1,9 @@
 {
-  "version": "16.28",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.28/CandleScanner_v16.28.apk",
-  "apkName": "CandleScanner_v16.28.apk",
-  "apkSha256": "e55a92af6104b3d57457f02db3791965a0bafb3ffd88035fc155260d60272b73",
-  "notes": "Named OTC assets such as Cardano OTC are now verified correctly. Stale pair identity and pending learning are cleared whenever the current pair cannot be verified.",
-  "build": 96,
-  "publishedAt": "2026-09-25T09:00:00Z"
+  "version": "16.29",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.29/CandleScanner_v16.29.apk",
+  "apkName": "CandleScanner_v16.29.apk",
+  "apkSha256": "pending-build",
+  "notes": "MEDIUM CHANCE (70-84%) is restored for Safer Mode and Pattern Mode while preserving completed-candle confirmation, safety filters, and all learning data.",
+  "build": 97,
+  "publishedAt": "2026-09-25T12:55:00Z"
 }
