@@ -42,9 +42,9 @@ jobs:
           cp license-generator/build/outputs/apk/release/license-generator-release.apk AZ_Licence_Generator_v1.1.apk
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: CandleScanner-v16.29-signed
+          name: CandleScanner-v16.30-signed
           path: |
-            CandleScanner_v16.29.apk
+            CandleScanner_v16.30.apk
             AZ_Licence_Generator_v1.1.apk
       - name: Publish GitHub release
         if: github.ref == 'refs/heads/main'
@@ -54,7 +54,7 @@ jobs:
       - name: Publish verified update manifest
         if: github.ref == 'refs/heads/main'
         run: |
-          APK_SHA256=$(sha256sum CandleScanner_v16.29.apk | cut -d' ' -f1)
+          APK_SHA256=$(sha256sum CandleScanner_v16.30.apk | cut -d' ' -f1)
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -69,7 +69,7 @@ jobs:
               exit 0
             fi
 
-            git commit -m "Publish v16.29 APK checksum [skip ci]"
+            git commit -m "Publish v16.30 APK checksum [skip ci]"
             if git push origin HEAD:main; then
               exit 0
             fi
