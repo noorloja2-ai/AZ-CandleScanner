@@ -1,9 +1,9 @@
 {
-  "version": "16.29",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.29/CandleScanner_v16.29.apk",
-  "apkName": "CandleScanner_v16.29.apk",
-  "apkSha256": "fa647b8bcbb646d2ba8bfa8531d28b9448cbc52f873b94711c44dadf6d07cc8f",
-  "notes": "MEDIUM CHANCE (70-84%) is restored for Safer Mode and Pattern Mode while preserving completed-candle confirmation, safety filters, and all learning data.",
-  "build": 97,
-  "publishedAt": "2026-09-25T12:55:00Z"
+  "version": "16.30",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.30/CandleScanner_v16.30.apk",
+  "apkName": "CandleScanner_v16.30.apk",
+  "apkSha256": "PENDING_BUILD",
+  "notes": "Banner labels older setups as RECENT PATTERN and explains NO TRADE when the move is extended. Latest completed-candle safety, MEDIUM CHANCE signals, and all learning data are preserved.",
+  "build": 98,
+  "publishedAt": "2026-09-25T15:44:00Z"
 }
