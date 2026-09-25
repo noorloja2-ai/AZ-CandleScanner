@@ -155,7 +155,7 @@ public final class QuickDecisionEngine {
             stableScans = 1;
         }
 
-        int threshold = Math.max(78, Math.min(90, thresholdPct));
+        int threshold = Math.max(70, Math.min(90, thresholdPct));
         double fused = clamp(.72 * emaLead + .28 * emaContext, .50, .91);
         int score = (int)Math.round(fused * 100.0);
 
