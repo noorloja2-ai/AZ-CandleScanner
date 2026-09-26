@@ -1,9 +1,9 @@
 {
-  "version": "16.33",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.33/CandleScanner_v16.33.apk",
-  "apkName": "CandleScanner_v16.33.apk",
-  "apkSha256": "710484e3e8eba0f36e639135d9822549835b016f1a3835120476d2c109634153",
-  "notes": "Learning no longer vetoes valid completed-candle signals in either mode; it applies only a bounded confidence calibration. Safer Mode keeps its visual confirmation gates and existing learning data is preserved.",
-  "build": 101,
-  "publishedAt": "2026-09-26T01:04:57Z"
+  "version": "16.34",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.34/CandleScanner_v16.34.apk",
+  "apkName": "CandleScanner_v16.34.apk",
+  "apkSha256": "5b6aba3b7f770384a9e3017dfcb81356455f2985c8863bcb82abbc95c377a731",
+  "notes": "Removes the remaining early learning veto, gives confirmed Pattern Mode setups the 70% Medium Chance floor, and displays the active NO TRADE reason. Existing learning data is preserved.",
+  "build": 102,
+  "publishedAt": "2026-09-26T10:11:17Z"
 }
