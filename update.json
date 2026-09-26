@@ -1,9 +1,9 @@
 {
-  "version": "16.35",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.35/CandleScanner_v16.35.apk",
-  "apkName": "CandleScanner_v16.35.apk",
-  "apkSha256": "d266a77fd63e4b7573fb14763c2f4e52008a4a55c0aafaa6b7c0ebc4d7bb06f5",
-  "notes": "Locks each official post-close result for the full target candle so 1-second live refresh cannot overwrite it with WAITING. Existing learning data is preserved.",
-  "build": 103,
-  "publishedAt": "2026-09-26T13:10:17Z"
+  "version": "16.36",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.36/CandleScanner_v16.36.apk",
+  "apkName": "CandleScanner_v16.36.apk",
+  "apkSha256": "394415fb4aa229c01ed6e1bde93e10a09c43f1073fd50d152129393d69051e4a",
+  "notes": "Fixes one-candle-late banner entries and makes isolated Pattern Mode outcomes conservatively calibrate future Pattern Mode signals. Existing learning data is preserved.",
+  "build": 104,
+  "publishedAt": "2026-09-26T13:42:22Z"
 }
