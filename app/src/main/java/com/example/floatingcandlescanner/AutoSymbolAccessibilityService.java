@@ -123,6 +123,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     private String lastLiveStatus="AI LIVE • starting";
     private SignalResult lastNotifiedSignal;
     private int lastNotifiedHorizon=1;
+    private SignalResult lastOfficialResult;
+    private int lastOfficialHorizon=1;
+    private long lastOfficialBoundaryMs=Long.MIN_VALUE;
 
     private final Runnable scanTick=new Runnable(){
         @Override public void run(){
@@ -285,6 +288,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         lastSignalHorizon=0;
         lastWinRate=-1;
         lastWinRateSamples=0;
+        lastOfficialResult=null;
+        lastOfficialHorizon=1;
+        lastOfficialBoundaryMs=Long.MIN_VALUE;
     }
 
     /**
@@ -656,6 +662,12 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             return true;
         }
 
+        if(automatic && targetBoundary>0L){
+            lastOfficialResult=decision;
+            lastOfficialHorizon=horizon;
+            lastOfficialBoundaryMs=targetBoundary;
+        }
+
         // Official/manual result: one clear next-candle direction. Strong alerts
         // still require the stricter completed-candle quality gates from the base
         // model, while the displayed probability uses the self-decision blend.
@@ -730,6 +742,24 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         main.post(()->{
             if(!scannerEnabled()||r==null)return;
             showStatusOverlay("READY");
+            if(officialDecisionActive(horizon)){
+                SignalResult official=lastOfficialResult;
+                String direction=official==null||"WAIT".equals(official.label)
+                        ?"NO TRADE":official.label;
+                int pct=official==null?0:("BUY".equals(official.label)
+                        ?official.buyProbability:official.sellProbability);
+                lastLiveStatus="AI LIVE • OFFICIAL "+direction+
+                        (pct>=70?" "+pct+"%":"")+" LOCKED";
+                if(liveText!=null){
+                    liveText.setText(lastLiveStatus+" • NEXT UPDATE AFTER CANDLE CLOSE");
+                    liveText.setTextColor("BUY".equals(direction)
+                            ?Color.rgb(134,239,172):("SELL".equals(direction)
+                            ?Color.rgb(252,165,165):Color.rgb(250,204,21)));
+                }
+                refreshSignalDisplay(System.currentTimeMillis());
+                refreshInfoCard(System.currentTimeMillis());
+                return;
+            }
             updateTopInfoBar(r,horizon,quick);
             if("WAIT".equals(r.label)){
                 lastLiveDirection="";
@@ -784,6 +814,14 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         });
     }
 
+    private boolean officialDecisionActive(int horizon){
+        if(lastOfficialResult==null || lastOfficialBoundaryMs<=0L)return false;
+        int minutes=Math.max(1,Math.min(5,horizon));
+        long interval=minutes*60_000L;
+        long currentBoundary=(System.currentTimeMillis()/interval)*interval;
+        return lastOfficialBoundaryMs==currentBoundary && lastOfficialHorizon==horizon;
+    }
+
     private void showUnavailable(String text){
         main.post(()->{
             if(!scannerEnabled())return;
@@ -808,7 +846,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 lastSignalHorizon=horizon;
                 clearStrongSignalCard();
                 if(statusText!=null){
-                    statusText.setText("NO TRADE • WAITING FOR COMPLETED CANDLE");
+                    String reason=noTradeReason(r);
+                    statusText.setText("OFFICIAL NO TRADE"+
+                            (reason.isEmpty()?"":" • "+reason));
                     statusText.setTextColor(Color.rgb(250,204,21));
                 }
                 updateSymbolText();
