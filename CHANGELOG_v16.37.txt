@@ -1,0 +1,9 @@
+AZ CandleScanner v16.37
+
+- Shows real isolated Pattern Mode resolved totals and accuracy for M1 through M5 on the Training page.
+- Separates Pattern Mode outcomes from Safer Mode setup-quality statistics in the Pattern Performance dashboard.
+- Fixes Safer Mode CSV export reading the obsolete v3 file while current results are stored in v4.
+- Adds a separate Pattern Mode CSV export so its exact-close outcomes can be inspected directly.
+- Makes Safer Mode learn from the final displayed decision after all filters instead of an earlier pre-filter candidate.
+- Continues evaluating confirmed Pattern candidates in the background when learning suppresses the user-facing trade, preventing a weak group from becoming permanently frozen.
+- Keeps all existing local calibration, Pattern Mode history and community-learning data.

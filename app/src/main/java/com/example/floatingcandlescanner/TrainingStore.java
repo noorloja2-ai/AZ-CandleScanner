@@ -180,7 +180,7 @@ public class TrainingStore {
 
     public File csvFile() {
         return new File(new File(context.getFilesDir(), "training"),
-                "training_samples_v3.csv");
+                "training_samples_v4.csv");
     }
 
     public synchronized int resolvedRowCount() {

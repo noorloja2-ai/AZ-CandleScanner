@@ -613,7 +613,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         // official automatic scans create/resolve labels; 1-second live frames
         // and manual taps never become training labels.
         if(automatic && targetBoundary>0L){
-            processLearningAtBoundary(targetBoundary,a,selectedH,decision,!automaticPatterns);
+            resolveLearningAtBoundary(targetBoundary,a,selectedH);
             if(boardLearning && boardLearner!=null && a.boardState!=null)
                 boardLearner.addPrediction(targetBoundary,asset,selectedH,selectedH+1,a.latestY,a.boardState);
             if(patternLearning!=null)
@@ -624,13 +624,15 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         // learner. Its outcomes go to a separate local store and never update
         // OnlineLearner or the validated community-learning queue.
         boolean officialPostClose=automatic && targetBoundary>0L;
+        SignalResult patternCandidate=null;
         if(automaticPatterns){
             // Pattern Mode may issue an official direction only from the
             // broker-aligned post-close scan. Live/manual frames can describe
             // the chart, but cannot recycle an older pattern into a new trade.
-            if(officialPostClose)
+            if(officialPostClose){
                 decision=applyAutomaticPatternSignal(decision,a.boardState);
-            else
+                patternCandidate=decision;
+            }else
                 decision=patternNoTrade(decision,"WAITING FOR LATEST CANDLE CLOSE");
         }else if(!officialPostClose){
             // Safer Mode follows the same timing rule as Pattern Mode: a live
@@ -655,10 +657,17 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 decision=patternNoTrade(decision,"BELOW MEDIUM CHANCE (70%)");
         }
 
-        if(automatic && targetBoundary>0L && patternLearning!=null){
-            if(automaticPatterns)
+        if(automatic && targetBoundary>0L){
+            if(automaticPatterns && patternLearning!=null)
+                // Keep evaluating confirmed candidates even when learned
+                // calibration suppresses the user-facing trade. Otherwise a
+                // weak group could stop collecting evidence and never recover.
                 patternLearning.addPrediction(targetBoundary,asset,selectedH,selectedH+1,
-                        a.latestY,decision);
+                        a.latestY,patternCandidate);
+            else if(!automaticPatterns)
+                // Store only the final Safer/Shadow decision shown after every
+                // calibration and threshold gate, not the earlier base candidate.
+                addLearningPrediction(targetBoundary,a,selectedH,decision);
         }
 
         if(liveRefresh){
@@ -1868,9 +1877,8 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         return a;
     }
 
-    private void processLearningAtBoundary(long boundary,CandleVision.Analysis now,
-                                           int selectedH,SignalResult displayed,
-                                           boolean addSafePrediction){
+    private void resolveLearningAtBoundary(long boundary,CandleVision.Analysis now,
+                                           int selectedH){
         if(now==null||!now.valid||now.detectedBins<8||selectedH<0||selectedH>4)return;
         String asset=currentAsset();
         learner.setAsset(asset);
@@ -1910,11 +1918,17 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             // using a later candle would corrupt the learner.
         }
         training.save(keep);
+    }
 
+    private void addLearningPrediction(long boundary,CandleVision.Analysis now,
+                                       int selectedH,SignalResult displayed){
+        if(now==null||!now.valid||now.detectedBins<8||selectedH<0||selectedH>4)return;
+        String asset=currentAsset();
+        learner.setAsset(asset);
         int minutes=selectedH+1;
         SignalResult base=now.horizons!=null && selectedH<now.horizons.length
                 ?now.horizons[selectedH]:null;
-        if(addSafePrediction && base!=null && displayed!=null){
+        if(base!=null && displayed!=null){
             // Store raw model probability for calibration, but the probability
             // actually displayed by the Self-AI for win-rate accounting.
             SignalResult sample=new SignalResult(
