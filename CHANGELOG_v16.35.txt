@@ -1,0 +1,7 @@
+AZ CandleScanner v16.35
+
+- Fixes the 1-second live refresh overwriting the official completed-candle result with WAITING FOR LATEST CANDLE CLOSE.
+- Locks the official BUY, SELL or NO TRADE banner for the full target candle.
+- Live analysis continues in the background without removing or replacing the official result.
+- Shows the official NO TRADE reason instead of presenting it as an unfinished-candle wait.
+- Keeps post-close timing, the 70% signal minimum, contradiction protection and all existing learning history.
