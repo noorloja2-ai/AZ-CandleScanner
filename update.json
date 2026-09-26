@@ -1,9 +1,9 @@
 {
-  "version": "16.34",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.34/CandleScanner_v16.34.apk",
-  "apkName": "CandleScanner_v16.34.apk",
-  "apkSha256": "5b6aba3b7f770384a9e3017dfcb81356455f2985c8863bcb82abbc95c377a731",
-  "notes": "Removes the remaining early learning veto, gives confirmed Pattern Mode setups the 70% Medium Chance floor, and displays the active NO TRADE reason. Existing learning data is preserved.",
-  "build": 102,
-  "publishedAt": "2026-09-26T10:11:17Z"
+  "version": "16.35",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.35/CandleScanner_v16.35.apk",
+  "apkName": "CandleScanner_v16.35.apk",
+  "apkSha256": "d266a77fd63e4b7573fb14763c2f4e52008a4a55c0aafaa6b7c0ebc4d7bb06f5",
+  "notes": "Locks each official post-close result for the full target candle so 1-second live refresh cannot overwrite it with WAITING. Existing learning data is preserved.",
+  "build": 103,
+  "publishedAt": "2026-09-26T13:10:17Z"
 }
