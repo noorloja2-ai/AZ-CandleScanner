@@ -932,7 +932,10 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         long entryAt=predictionTargetStartMs>0L
                 ?predictionTargetStartMs:nextBoundary(now,Math.max(1,horizon));
         String entry=new SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(new Date(entryAt));
-        String score="NO TRADE".equals(direction)?"":" • "+pct+"%";
+        // This is a model ranking score, not a measured probability.  The
+        // uploaded outcomes show that a displayed 70-79 score has not meant a
+        // 70-79% win rate, so keep that distinction explicit in the banner.
+        String score="NO TRADE".equals(direction)?"":" • SCORE "+pct+"/100";
         boolean missedEntry=!("NO TRADE".equals(direction))
                 && entryAt>0L && now>entryAt+ENTRY_WINDOW_MS;
         String headline=missedEntry?"SIGNAL EXPIRED: NO TRADE":"NEXT CANDLE: "+direction+score;
@@ -967,8 +970,19 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         // completed and visually confirmed setup from the newest closed candle.
         // It may override the base model, but never a weak/neutral/stale setup.
         int observedStrength=Math.max(r.strength,Math.max(r.buyProbability,r.sellProbability));
-        int strength=Math.max(70,observedStrength);
         if(state==null)return patternNoTrade(r,"LATEST CANDLE NOT VERIFIED");
+
+        // Never manufacture a Medium Chance signal by flooring every named
+        // pattern to 70.  Historical learning showed that this artificial
+        // 70-79 bucket was the weakest score band.  A pattern must now arrive
+        // with enough evidence from the base model on its own.
+        int required=patternModeMinimumScore(pattern,r.structure);
+        if(observedStrength<required)
+            return patternNoTrade(r,"PATTERN SCORE "+observedStrength+
+                    " BELOW REQUIRED "+required);
+
+        String precisionIssue=patternPrecisionIssue(pattern,r.structure,state,direction);
+        if(!precisionIssue.isEmpty())return patternNoTrade(r,precisionIssue);
 
         // The newest completed candle must confirm the mapped direction. This
         // prevents an earlier green Marubozu (for example) from generating BUY
@@ -980,12 +994,12 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(!latestConfirms || !recentConfirms)
             return patternNoTrade(r,"LATEST CLOSED CANDLE CONTRADICTS "+direction);
 
-        int directional=Math.min(100,strength);
+        int directional=Math.min(100,observedStrength);
         int bp="BUY".equals(direction)?directional:100-directional;
         int sp="SELL".equals(direction)?directional:100-directional;
         String explanation="Automatic "+direction+" from strong confirmed pattern: "+pattern+
                 ". "+r.explanation;
-        return new SignalResult(direction,strength,r.score,bp,sp,r.confidence,
+        return new SignalResult(direction,directional,r.score,bp,sp,r.confidence,
                 r.regime,r.rawBuyProbability,r.setupQuality,r.structure,explanation);
     }
 
@@ -997,6 +1011,59 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 r.confidence,r.regime,r.rawBuyProbability,r.setupQuality,r.structure,explanation);
     }
 
+    /**
+     * Patterns that underperformed in the exported exact-close history need a
+     * stronger base score. Context-rich variants remain eligible; this does
+     * not ban the whole candle family.
+     */
+    private int patternModeMinimumScore(String pattern,String structure){
+        String p=((pattern==null?"":pattern)+" • "+
+                (structure==null?"":structure)).toUpperCase(Locale.US);
+        if(p.contains("THREE WHITE SOLDIERS") || p.contains("THREE BLACK CROWS")
+                || isBareHammer(pattern))return 85;
+        return 70;
+    }
+
+    /**
+     * Multi-candle continuation names and a bare Hammer are not sufficient by
+     * themselves. The uploaded learning file showed materially better results
+     * for support/retest/confirmation variants than for standalone names.
+     */
+    private String patternPrecisionIssue(String pattern,String structure,
+                                         CandleVision.BoardState state,String direction){
+        String p=(pattern==null?"":pattern).toUpperCase(Locale.US);
+        String full=(p+" • "+(structure==null?"":structure)).toUpperCase(Locale.US);
+        boolean contextual=containsAny(full,"SUPPORT","RESISTANCE","RETEST",
+                "CONFIRM","REJECTION","BREAKOUT","BREAKDOWN","STRUCTURE BREAK",
+                "BOS","CHOCH","NEW LOW FAIL","NEW HIGH FAIL",
+                "HIGHER HIGHS","LOWER LOWS");
+
+        if(isBareHammer(pattern) && !contextual)
+            return "HAMMER NEEDS SUPPORT OR CONFIRMATION";
+
+        boolean threeUp=full.contains("THREE WHITE SOLDIERS");
+        boolean threeDown=full.contains("THREE BLACK CROWS");
+        if(threeUp || threeDown){
+            boolean trendAligned="BUY".equals(direction)
+                    ?state.trend>.10 && state.momentum>.04
+                    :state.trend<-.10 && state.momentum<-.04;
+            boolean extended="BUY".equals(direction)
+                    ?state.pricePosition>=.84:state.pricePosition<=.16;
+            if(!contextual || !trendAligned || extended)
+                return "THREE-CANDLE PATTERN NEEDS NON-EXTENDED STRUCTURE CONFIRMATION";
+        }
+        return "";
+    }
+
+    private boolean isBareHammer(String pattern){
+        if(pattern==null)return false;
+        String p=pattern.toUpperCase(Locale.US).trim();
+        if(!p.contains("HAMMER") || p.contains("INVERTED HAMMER")
+                || p.contains("HANGING MAN"))return false;
+        return !containsAny(p,"SUPPORT","RETEST","CONFIRM","REJECTION","BREAKOUT",
+                "BREAKDOWN","BOS","CHOCH");
+    }
+
     private String noTradeReason(SignalResult r){
         if(r==null || r.explanation==null)return "";
         String e=r.explanation.toUpperCase(Locale.US);
@@ -1005,6 +1072,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 "LATEST CLOSED CANDLE CONTRADICTS BUY",
                 "LATEST CLOSED CANDLE CONTRADICTS SELL",
                 "NO STRONG CONFIRMED PATTERN",
+                "PATTERN SCORE",
+                "HAMMER NEEDS SUPPORT OR CONFIRMATION",
+                "THREE-CANDLE PATTERN NEEDS NON-EXTENDED STRUCTURE CONFIRMATION",
                 "BELOW MEDIUM CHANCE (70%)",
                 "TREND AND SHORT-TERM MOMENTUM DISAGREE",
                 "HISTORY ENTRY GATE",
@@ -1381,7 +1451,8 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         card.setBackground(bg);
 
         TextView title=new TextView(this);
-        title.setText(confidenceTitle(quick.score)+" • "+quick.label+" "+quick.score+"%");
+        title.setText(confidenceTitle(quick.score)+" • "+quick.label+
+                " • SCORE "+quick.score+"/100");
         title.setTextSize(20); title.setTypeface(null,Typeface.BOLD); title.setTextColor(color);
         card.addView(title);
 
@@ -1577,7 +1648,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         String signalTime=clock(predictionTargetStartMs);
         int pct="BUY".equals(r.label)?r.buyProbability:r.sellProbability;
         OnlineLearner.Verification verified=learner.verification(Math.max(0,Math.min(4,horizon-1)));
-        title.setText(confidenceTitle(pct)+" • "+r.label+"  "+pct+"%");
+        title.setText(confidenceTitle(pct)+" • "+r.label+" • SCORE "+pct+"/100");
         title.setTextSize(22);
         title.setTypeface(null,Typeface.BOLD);
         title.setTextColor(c);
@@ -1666,7 +1737,8 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 r.label+" ENTRY "+clock(predictionTargetStartMs)+" • "+entryState(now,predictionTargetStartMs)+"\n"+
                 "SETUP: "+shortSetup(r)+(pressureLine(r).isEmpty()?"":"\n"+pressureLine(r))+"\n"+verified.summary()+"\n"+wr;
         n.setSmallIcon(icon)
-                .setContentTitle(confidenceTitle(pct)+" • "+r.label+" "+pct+"%")
+                .setContentTitle(confidenceTitle(pct)+" • "+r.label+
+                        " • SCORE "+pct+"/100")
                 .setContentText(currentAsset()+" • M"+horizon+" • "+wr)
                 .setStyle(new Notification.BigTextStyle().bigText(fullInfo))
                 .setAutoCancel(false)
@@ -1714,7 +1786,8 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         String details=currentAsset()+" • M"+horizon+" • TRADE "+tradeDuration(horizon)+"\n"+
                 quick.reason+"\n"+verified.summary()+"\nLive signal; confirm at candle close.";
         n.setSmallIcon(icon)
-                .setContentTitle(confidenceTitle(pct)+" • "+quick.label+" "+pct+"%")
+                .setContentTitle(confidenceTitle(pct)+" • "+quick.label+
+                        " • SCORE "+pct+"/100")
                 .setContentText(currentAsset()+" • M"+horizon+" • LIVE VERIFIED")
                 .setStyle(new Notification.BigTextStyle().bigText(details))
                 .setAutoCancel(false).setOngoing(true).setContentIntent(open)
@@ -1777,9 +1850,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     }
 
     private String confidenceTitle(int score){
-        if(score>=90)return "VERY HIGH CONFIDENCE";
-        if(score>=85)return "HIGH CHANCE";
-        if(score>=70)return "MEDIUM CHANCE";
+        if(score>=90)return "VERY HIGH SCORE";
+        if(score>=85)return "HIGH SCORE";
+        if(score>=70)return "MEDIUM SCORE";
         return "NO TRADE";
     }
 
