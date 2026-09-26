@@ -1,9 +1,9 @@
 {
-  "version": "16.37",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.37/CandleScanner_v16.37.apk",
-  "apkName": "CandleScanner_v16.37.apk",
-  "apkSha256": "21074369228bf8de426fadc29a096eb171464fbf1607ac28b86c4799cd56a96f",
-  "notes": "Shows real Pattern Mode learning totals, separates mode statistics, and fixes current Safer and Pattern CSV exports. Existing learning data is preserved.",
-  "build": 105,
-  "publishedAt": "2026-09-26T17:21:18Z"
+  "version": "16.38",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.38/CandleScanner_v16.38.apk",
+  "apkName": "CandleScanner_v16.38.apk",
+  "apkSha256": "69ad6f8e81ff364199e785c68abc8ef0c4a01e655b4b55bdea5dde05a031658d",
+  "notes": "Checks the mapped pattern direction score and shows the specific no-trade gate. Existing local learning data is preserved.",
+  "build": 106,
+  "publishedAt": "2026-09-26T17:23:46Z"
 }
