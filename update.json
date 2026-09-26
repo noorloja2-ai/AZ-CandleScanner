@@ -1,9 +1,9 @@
 {
-  "version": "16.32",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.32/CandleScanner_v16.32.apk",
-  "apkName": "CandleScanner_v16.32.apk",
-  "apkSha256": "453cf038957111a9b9ae22659670cc2a1d459d81dcc6b0c267b8697ec08cb80a",
-  "notes": "Expanded broker asset recognition fixes EUR/RUB OTC and adds more currencies, crypto, stocks, commodities and indices. Existing learning data is preserved.",
-  "build": 100,
-  "publishedAt": "2026-09-25T20:16:48Z"
+  "version": "16.33",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.33/CandleScanner_v16.33.apk",
+  "apkName": "CandleScanner_v16.33.apk",
+  "apkSha256": "710484e3e8eba0f36e639135d9822549835b016f1a3835120476d2c109634153",
+  "notes": "Learning no longer vetoes valid completed-candle signals in either mode; it applies only a bounded confidence calibration. Safer Mode keeps its visual confirmation gates and existing learning data is preserved.",
+  "build": 101,
+  "publishedAt": "2026-09-26T01:04:57Z"
 }
