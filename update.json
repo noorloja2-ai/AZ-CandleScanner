@@ -1,9 +1,9 @@
 {
-  "version": "16.36",
-  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.36/CandleScanner_v16.36.apk",
-  "apkName": "CandleScanner_v16.36.apk",
-  "apkSha256": "394415fb4aa229c01ed6e1bde93e10a09c43f1073fd50d152129393d69051e4a",
-  "notes": "Fixes one-candle-late banner entries and makes isolated Pattern Mode outcomes conservatively calibrate future Pattern Mode signals. Existing learning data is preserved.",
-  "build": 104,
-  "publishedAt": "2026-09-26T13:42:22Z"
+  "version": "16.37",
+  "apkUrl": "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.37/CandleScanner_v16.37.apk",
+  "apkName": "CandleScanner_v16.37.apk",
+  "apkSha256": "2585070541cc06b7b79bef8b6bd6031f57197f50adab9fccf3a2a1b6b28bef26",
+  "notes": "Shows real Pattern Mode learning totals, separates mode statistics, and fixes current Safer and Pattern CSV exports. Existing learning data is preserved.",
+  "build": 105,
+  "publishedAt": "2026-09-26T15:27:46Z"
 }
