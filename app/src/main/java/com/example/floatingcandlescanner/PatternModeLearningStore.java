@@ -170,6 +170,35 @@ public final class PatternModeLearningStore {
         return n>=minimum?new Stat(n,w):null;
     }
 
+    public synchronized int totalSamples(String asset,int minutes){
+        if(minutes<=0)return 0;
+        return prefs.getInt(safe(asset)+"_M"+minutes+"_n",0);
+    }
+
+    public synchronized int wins(String asset,int minutes){
+        if(minutes<=0)return 0;
+        return prefs.getInt(safe(asset)+"_M"+minutes+"_w",0);
+    }
+
+    public synchronized int totalSamplesAll(String asset){
+        int total=0;
+        for(int minutes=1;minutes<=5;minutes++)total+=totalSamples(asset,minutes);
+        return total;
+    }
+
+    public synchronized String summary(String asset,int minutes){
+        int n=totalSamples(asset,minutes),w=wins(asset,minutes);
+        if(n==0)return "0 resolved • learning building";
+        int rate=Math.round(100f*w/n);
+        if(n<MODE_MIN_SAMPLES)
+            return n+" resolved • "+rate+"% correct • mode calibration "+n+"/"+MODE_MIN_SAMPLES;
+        return n+" resolved • "+rate+"% correct • mode calibration active";
+    }
+
+    public File csvFile(){
+        return new File(new File(context.getFilesDir(),"training"),"pattern_mode_samples_v1.csv");
+    }
+
     private static final class Stat{
         final int samples,wins;
         Stat(int samples,int wins){this.samples=samples;this.wins=wins;}

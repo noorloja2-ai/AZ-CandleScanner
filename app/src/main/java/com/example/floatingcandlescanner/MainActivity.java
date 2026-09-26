@@ -23,6 +23,7 @@ import java.util.Locale;
 /** Cyber dashboard. Use the top menu to open each user-facing page. */
 public class MainActivity extends Activity {
     private static final int EXPORT_TRAINING_REQUEST=3107;
+    private static final int EXPORT_PATTERN_REQUEST=3108;
     private static final int CYAN=Color.rgb(34,211,238), BLUE=Color.rgb(37,99,235);
     private static final int CARD=Color.rgb(10,24,47);
     SharedPreferences prefs;
@@ -231,8 +232,10 @@ public class MainActivity extends Activity {
         patterns.setOnClickListener(v->showPatternDashboard());r.addView(patterns);
         Button diagnostics=cyberButton("SCANNER DIAGNOSTICS",BLUE);
         diagnostics.setOnClickListener(v->showDiagnostics());r.addView(diagnostics);
-        Button export=cyberButton("EXPORT LEARNING DATA",CYAN);
-        export.setOnClickListener(v->exportLearningData());r.addView(export);
+        Button export=cyberButton("EXPORT SAFER LEARNING DATA",CYAN);
+        export.setOnClickListener(v->exportLearningData(false));r.addView(export);
+        Button exportPattern=cyberButton("EXPORT PATTERN LEARNING DATA",BLUE);
+        exportPattern.setOnClickListener(v->exportLearningData(true));r.addView(exportPattern);
         section(r,"TRAINING INFORMATION");
         note(r,"Training stays automatic. AZ learns only from completed, exact-close outcomes and keeps local calibration active.");
         note(r,"Shared learning sync validates anonymous numeric outcomes. No screenshots, credentials or Android identifiers are uploaded.");
@@ -305,8 +308,11 @@ public class MainActivity extends Activity {
         StringBuilder s=new StringBuilder();
         int all=learner.totalSamplesAll();
         TrainingStore store=new TrainingStore(this);
+        PatternModeLearningStore patternStore=new PatternModeLearningStore(this);
+        int patternAll=patternStore.totalSamplesAll(currentDetectedAsset());
         s.append("CHART  ").append(currentDetectedAsset())
-                .append("\nRESOLVED  ").append(all)
+                .append("\nSAFER RESOLVED  ").append(all)
+                .append("\nPATTERN RESOLVED  ").append(patternAll)
                 .append("\nPENDING  ").append(store.pendingCount())
                 .append("\nSYNC  ").append(CommunityLearningSync.status(this)).append("\n\n");
         for(int i=0;i<5;i++){
@@ -320,15 +326,24 @@ public class MainActivity extends Activity {
             else if(n<30)s.append("\nLOCAL LEARNING LOCKED • ").append(n).append("/30");
             if(i<4)s.append("\n\n");
         }
+        s.append("\n\nPATTERN MODE LEARNING");
+        for(int minutes=1;minutes<=5;minutes++)
+            s.append("\nM").append(minutes).append("  ")
+                    .append(patternStore.summary(currentDetectedAsset(),minutes));
         s.append(all<150?"\n\nCalibration is still building.":"\n\nLearned calibration is active.");
         learnText.setText(s.toString());
     }
 
     void showPatternDashboard(){
         learner.setAsset(currentDetectedAsset());
-        StringBuilder s=new StringBuilder("PAIR  ").append(currentDetectedAsset()).append("\n");
-        for(int h=0;h<5;h++)s.append("\nM").append(h+1).append("\n")
-                .append(learner.setupReport(h)).append("\n");
+        PatternModeLearningStore patternStore=new PatternModeLearningStore(this);
+        StringBuilder s=new StringBuilder("PAIR  ").append(currentDetectedAsset())
+                .append("\n\nPATTERN MODE OUTCOMES");
+        for(int minutes=1;minutes<=5;minutes++)s.append("\nM").append(minutes).append("  ")
+                .append(patternStore.summary(currentDetectedAsset(),minutes));
+        s.append("\n\nSAFER MODE SETUP QUALITY");
+        for(int h=0;h<5;h++)s.append("\n\nM").append(h+1).append("\n")
+                .append(learner.setupReport(h));
         new AlertDialog.Builder(this).setTitle("Pattern Performance")
                 .setMessage(s.toString()).setPositiveButton("CLOSE",null).show();
     }
@@ -355,23 +370,28 @@ public class MainActivity extends Activity {
                 .setMessage(text).setPositiveButton("CLOSE",null).show();
     }
 
-    void exportLearningData(){
-        TrainingStore store=new TrainingStore(this);
-        if(!store.csvFile().exists()){
-            Toast.makeText(this,"No resolved learning data is available yet.",Toast.LENGTH_LONG).show();
+    void exportLearningData(boolean patternMode){
+        java.io.File source=patternMode?new PatternModeLearningStore(this).csvFile()
+                :new TrainingStore(this).csvFile();
+        if(!source.exists()){
+            Toast.makeText(this,patternMode?"No resolved Pattern Mode data is available yet."
+                    :"No resolved Safer Mode data is available yet.",Toast.LENGTH_LONG).show();
             return;
         }
         Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("text/csv");
-        i.putExtra(Intent.EXTRA_TITLE,"AZ_learning_data.csv");
-        startActivityForResult(i,EXPORT_TRAINING_REQUEST);
+        i.putExtra(Intent.EXTRA_TITLE,patternMode?"AZ_pattern_learning_data.csv":"AZ_safer_learning_data.csv");
+        startActivityForResult(i,patternMode?EXPORT_PATTERN_REQUEST:EXPORT_TRAINING_REQUEST);
     }
 
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
         super.onActivityResult(requestCode,resultCode,data);
-        if(requestCode!=EXPORT_TRAINING_REQUEST||resultCode!=RESULT_OK||data==null||data.getData()==null)return;
-        try(FileInputStream in=new FileInputStream(new TrainingStore(this).csvFile());
+        if((requestCode!=EXPORT_TRAINING_REQUEST&&requestCode!=EXPORT_PATTERN_REQUEST)
+                ||resultCode!=RESULT_OK||data==null||data.getData()==null)return;
+        java.io.File source=requestCode==EXPORT_PATTERN_REQUEST
+                ?new PatternModeLearningStore(this).csvFile():new TrainingStore(this).csvFile();
+        try(FileInputStream in=new FileInputStream(source);
             OutputStream out=getContentResolver().openOutputStream(data.getData())){
             if(out==null)throw new Exception("Android did not open the selected file");
             byte[] buffer=new byte[8192];int count;
