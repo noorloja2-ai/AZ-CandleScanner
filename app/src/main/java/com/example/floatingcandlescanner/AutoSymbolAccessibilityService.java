@@ -941,14 +941,13 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         String headline=missedEntry?"SIGNAL EXPIRED: NO TRADE":"NEXT CANDLE: "+direction+score;
         String trend=marketTrend(lastAnalysis==null?null:lastAnalysis.boardState);
         String trendReason="";
-        if("NO TRADE".equals(direction) && trend.contains("EXTENDED"))
-            trendReason=" • WAIT FOR PULLBACK";
-        else if("NO TRADE".equals(direction) && quick!=null
+        if("NO TRADE".equals(direction) && quick!=null
                 && quick.reason!=null && quick.reason.startsWith("NO TRADE:"))
             trendReason=" • "+quick.reason.substring("NO TRADE:".length()).trim();
         else if("NO TRADE".equals(direction)){
             String reason=noTradeReason(r);
             if(!reason.isEmpty())trendReason=" • "+reason;
+            else if(trend.contains("EXTENDED"))trendReason=" • WAIT FOR PULLBACK";
         }
         topInfoText.setText(headline+"\n"+
                 (recentPattern?"RECENT PATTERN: ":"PATTERN: ")+pattern+"\n"+
@@ -969,7 +968,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         // Pattern mode is deliberately decisive only for a genuinely strong,
         // completed and visually confirmed setup from the newest closed candle.
         // It may override the base model, but never a weak/neutral/stale setup.
-        int observedStrength=Math.max(r.strength,Math.max(r.buyProbability,r.sellProbability));
+        // The pattern's mapped side must have its own support. Taking the
+        // largest score can turn a strong BUY model into a strong SELL pattern.
+        int observedStrength="BUY".equals(direction)?r.buyProbability:r.sellProbability;
         if(state==null)return patternNoTrade(r,"LATEST CANDLE NOT VERIFIED");
 
         // Never manufacture a Medium Chance signal by flooring every named
@@ -1069,6 +1070,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         String e=r.explanation.toUpperCase(Locale.US);
         String[] reasons={
                 "WAITING FOR LATEST CANDLE CLOSE",
+                "LATEST CANDLE NOT VERIFIED",
                 "LATEST CLOSED CANDLE CONTRADICTS BUY",
                 "LATEST CLOSED CANDLE CONTRADICTS SELL",
                 "NO STRONG CONFIRMED PATTERN",
