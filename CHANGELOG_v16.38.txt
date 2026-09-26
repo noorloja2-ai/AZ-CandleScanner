@@ -1,0 +1,5 @@
+AZ CandleScanner v16.38
+
+- Checks a Pattern Mode BUY or SELL against the base score for that same direction. A strong opposite-side score no longer qualifies a pattern signal.
+- Shows the specific Pattern Mode no-trade gate on the broker banner, including when the latest candle could not be verified.
+- Preserves existing local learning history and calibration.
