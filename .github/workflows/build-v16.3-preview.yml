@@ -27,7 +27,7 @@ jobs:
           AZ_KEY_PASSWORD: ${{ secrets.AZ_KEY_PASSWORD }}
         run: gradle :app:assembleRelease --stacktrace
       - run: cp app/build/outputs/apk/release/app-release.apk CandleScanner_v16.4_PREVIEW.apk
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: CandleScanner-v16.4-preview-signed
           path: CandleScanner_v16.4_PREVIEW.apk
