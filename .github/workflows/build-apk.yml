@@ -38,23 +38,23 @@ jobs:
           AZ_KEY_PASSWORD: ${{ secrets.AZ_KEY_PASSWORD }}
         run: gradle :app:assembleRelease :license-generator:assembleRelease --stacktrace
       - run: |
-          cp app/build/outputs/apk/release/app-release.apk CandleScanner_v16.37.apk
+          cp app/build/outputs/apk/release/app-release.apk CandleScanner_v16.38.apk
           cp license-generator/build/outputs/apk/release/license-generator-release.apk AZ_Licence_Generator_v1.1.apk
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: CandleScanner-v16.37-signed
+          name: CandleScanner-v16.38-signed
           path: |
-            CandleScanner_v16.37.apk
+            CandleScanner_v16.38.apk
             AZ_Licence_Generator_v1.1.apk
       - name: Publish GitHub release
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create v16.37 CandleScanner_v16.37.apk AZ_Licence_Generator_v1.1.apk --title "CandleScanner v16.37" --notes-file CHANGELOG_v16.37.txt --latest || gh release upload v16.37 CandleScanner_v16.37.apk AZ_Licence_Generator_v1.1.apk --clobber
+        run: gh release create v16.38 CandleScanner_v16.38.apk AZ_Licence_Generator_v1.1.apk --title "CandleScanner v16.38" --notes-file CHANGELOG_v16.38.txt --latest || gh release upload v16.38 CandleScanner_v16.38.apk AZ_Licence_Generator_v1.1.apk --clobber
       - name: Publish verified update manifest
         if: github.ref == 'refs/heads/main'
         run: |
-          APK_SHA256=$(sha256sum CandleScanner_v16.37.apk | cut -d' ' -f1)
+          APK_SHA256=$(sha256sum CandleScanner_v16.38.apk | cut -d' ' -f1)
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -63,12 +63,12 @@ jobs:
             git checkout -B manifest-publish origin/main
             jq --arg sha "$APK_SHA256" \
                --arg published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-               '.version = "16.37" |
-                .apkUrl = "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.37/CandleScanner_v16.37.apk" |
-                .apkName = "CandleScanner_v16.37.apk" |
+               '.version = "16.38" |
+                .apkUrl = "https://github.com/noorloja2-ai/AZ-CandleScanner/releases/download/v16.38/CandleScanner_v16.38.apk" |
+                .apkName = "CandleScanner_v16.38.apk" |
                 .apkSha256 = $sha |
-                .notes = "Shows real Pattern Mode learning totals, separates mode statistics, and fixes current Safer and Pattern CSV exports. Existing learning data is preserved." |
-                .build = 105 |
+                .notes = "Checks the mapped pattern direction score and shows the specific no-trade gate. Existing local learning data is preserved." |
+                .build = 106 |
                 .publishedAt = $published' update.json > update.tmp
             mv update.tmp update.json
             git add update.json
@@ -77,7 +77,7 @@ jobs:
               exit 0
             fi
 
-            git commit -m "Publish v16.37 APK checksum [skip ci]"
+            git commit -m "Publish v16.38 APK checksum [skip ci]"
             if git push origin HEAD:main; then
               exit 0
             fi
