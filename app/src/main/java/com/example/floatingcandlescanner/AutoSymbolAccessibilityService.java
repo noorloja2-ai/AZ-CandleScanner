@@ -607,19 +607,22 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             decision=boardLearner.apply(asset,selectedH,a.boardState,decision);
         }
 
+        boolean automaticPatterns=prefs.getBoolean("auto_pattern_signals",false);
+
         // Self-learning is aligned to the exact completed-candle boundary. Only
         // official automatic scans create/resolve labels; 1-second live frames
         // and manual taps never become training labels.
         if(automatic && targetBoundary>0L){
-            processLearningAtBoundary(targetBoundary,a,selectedH,decision);
+            processLearningAtBoundary(targetBoundary,a,selectedH,decision,!automaticPatterns);
             if(boardLearning && boardLearner!=null && a.boardState!=null)
                 boardLearner.addPrediction(targetBoundary,asset,selectedH,selectedH+1,a.latestY,a.boardState);
+            if(patternLearning!=null)
+                patternLearning.resolve(targetBoundary,asset,selectedH,selectedH+1,a.latestY);
         }
 
         // Keep the optional aggressive pattern mode completely outside the safe
         // learner. Its outcomes go to a separate local store and never update
         // OnlineLearner or the validated community-learning queue.
-        boolean automaticPatterns=prefs.getBoolean("auto_pattern_signals",false);
         boolean officialPostClose=automatic && targetBoundary>0L;
         if(automaticPatterns){
             // Pattern Mode may issue an official direction only from the
@@ -635,11 +638,13 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             // but it can never become an actionable next-candle signal.
             decision=patternNoTrade(decision,"WAITING FOR LATEST CANDLE CLOSE");
         }
-        // Pair + timeframe are selected by OnlineLearner.setAsset/horizon.
-        // Learning calibrates confidence in both modes but is never the final
-        // hard blocker. Safer Mode remains protected by its completed-candle,
-        // trend, structure and confirmation gates above.
-        decision=learner.applySignalModeCalibration(selectedH,decision);
+        // Pattern Mode now consumes only its own isolated exact-close outcomes;
+        // Safer Mode keeps its existing local setup calibration.  Neither path
+        // may flip direction, and both remain bounded confidence adjustments.
+        if(automaticPatterns && patternLearning!=null)
+            decision=patternLearning.apply(asset,selectedH+1,decision);
+        else
+            decision=learner.applySignalModeCalibration(selectedH,decision);
 
         // Both modes allow a confirmed Medium Chance direction (70%+).
         // Existing completed-candle, pattern and safety gates still apply.
@@ -651,8 +656,9 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         }
 
         if(automatic && targetBoundary>0L && patternLearning!=null){
-            patternLearning.resolveAndRecord(targetBoundary,asset,selectedH,selectedH+1,
-                    a.latestY,automaticPatterns?decision:null);
+            if(automaticPatterns)
+                patternLearning.addPrediction(targetBoundary,asset,selectedH,selectedH+1,
+                        a.latestY,decision);
         }
 
         if(liveRefresh){
@@ -756,6 +762,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                             ?Color.rgb(134,239,172):("SELL".equals(direction)
                             ?Color.rgb(252,165,165):Color.rgb(250,204,21)));
                 }
+                updateTopInfoBar(official,horizon,null);
                 refreshSignalDisplay(System.currentTimeMillis());
                 refreshInfoCard(System.currentTimeMillis());
                 return;
@@ -912,10 +919,14 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         if(pattern.isEmpty() || "MULTI-FACTOR CONFLUENCE".equals(pattern))pattern="NOT DETECTED";
         boolean recentPattern=pattern.startsWith("RECENT ");
         if(recentPattern)pattern=pattern.substring("RECENT ".length()).trim();
-        long entryAt=predictionTargetStartMs>System.currentTimeMillis()
-                ?predictionTargetStartMs:nextBoundary(System.currentTimeMillis(),Math.max(1,horizon));
+        long now=System.currentTimeMillis();
+        long entryAt=predictionTargetStartMs>0L
+                ?predictionTargetStartMs:nextBoundary(now,Math.max(1,horizon));
         String entry=new SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(new Date(entryAt));
         String score="NO TRADE".equals(direction)?"":" • "+pct+"%";
+        boolean missedEntry=!("NO TRADE".equals(direction))
+                && entryAt>0L && now>entryAt+ENTRY_WINDOW_MS;
+        String headline=missedEntry?"SIGNAL EXPIRED: NO TRADE":"NEXT CANDLE: "+direction+score;
         String trend=marketTrend(lastAnalysis==null?null:lastAnalysis.boardState);
         String trendReason="";
         if("NO TRADE".equals(direction) && trend.contains("EXTENDED"))
@@ -927,11 +938,12 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             String reason=noTradeReason(r);
             if(!reason.isEmpty())trendReason=" • "+reason;
         }
-        topInfoText.setText("NEXT CANDLE: "+direction+score+"\n"+
+        topInfoText.setText(headline+"\n"+
                 (recentPattern?"RECENT PATTERN: ":"PATTERN: ")+pattern+"\n"+
                 "TREND: "+trend+trendReason+"\n"+
-                currentAsset()+" • M"+Math.max(1,horizon)+" • ENTRY "+entry);
-        topInfoText.setTextColor("NO TRADE".equals(direction)
+                currentAsset()+" • M"+Math.max(1,horizon)+" • ENTRY "+entry+
+                (missedEntry?" • MISSED":""));
+        topInfoText.setTextColor("NO TRADE".equals(direction)||missedEntry
                 ?Color.rgb(250,204,21):("BUY".equals(direction)
                 ?Color.rgb(134,239,172):Color.rgb(252,165,165)));
     }
@@ -1857,7 +1869,8 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
     }
 
     private void processLearningAtBoundary(long boundary,CandleVision.Analysis now,
-                                           int selectedH,SignalResult displayed){
+                                           int selectedH,SignalResult displayed,
+                                           boolean addSafePrediction){
         if(now==null||!now.valid||now.detectedBins<8||selectedH<0||selectedH>4)return;
         String asset=currentAsset();
         learner.setAsset(asset);
@@ -1873,6 +1886,11 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
             }
 
             if(p.dueAt==boundary){
+                // Old builds could place base-model samples into the main
+                // training queue while Pattern Mode was active.  Those rows are
+                // not the pattern call shown to the user, so discard them rather
+                // than contaminating Safer Mode or community learning.
+                if("PATTERN".equalsIgnoreCase(p.mode))continue;
                 double delta=p.entryY-now.latestY; // screen Y falls when price rises
                 if(Math.abs(delta)>=0.0035){
                     boolean up=delta>0;
@@ -1896,7 +1914,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         int minutes=selectedH+1;
         SignalResult base=now.horizons!=null && selectedH<now.horizons.length
                 ?now.horizons[selectedH]:null;
-        if(base!=null && displayed!=null){
+        if(addSafePrediction && base!=null && displayed!=null){
             // Store raw model probability for calibration, but the probability
             // actually displayed by the Self-AI for win-rate accounting.
             SignalResult sample=new SignalResult(
@@ -1904,8 +1922,7 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                     displayed.buyProbability,displayed.sellProbability,
                     displayed.confidence,base.regime,base.rawBuyProbability,
                     displayed.setupQuality,displayed.structure,displayed.explanation);
-            String learningMode=prefs.getBoolean("shadow_testing_mode",false)
-                    ?"SHADOW":(prefs.getBoolean("auto_pattern_signals",false)?"PATTERN":"SAFER");
+            String learningMode=prefs.getBoolean("shadow_testing_mode",false)?"SHADOW":"SAFER";
             training.addPrediction(boundary,asset,selectedH,minutes,now.latestY,sample,learningMode);
         }
     }

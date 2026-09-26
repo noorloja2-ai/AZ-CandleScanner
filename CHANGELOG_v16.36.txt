@@ -1,0 +1,8 @@
+AZ CandleScanner v16.36
+
+- Fixes the top banner showing the following candle instead of the actual official target candle.
+- Keeps the exact official entry time visible and marks the signal NO TRADE after the five-second entry window is missed.
+- Uses isolated Pattern Mode results to calibrate future Pattern Mode confidence after sufficient exact-close samples.
+- Pattern learning is bounded to five percentage points, never flips direction, and can lower a weak 70% setup to NO TRADE.
+- Prevents Pattern Mode records from entering Safer Mode or community calibration.
+- Keeps Safer Mode learning isolated and preserves all existing local and community learning history.
