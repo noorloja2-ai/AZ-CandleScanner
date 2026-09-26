@@ -133,8 +133,11 @@ public final class TradingBrain {
                 - .22*Math.signum(momentum)*exhaustion,-1,1);                      // 9
         double mFibContext = clamp(advanced.directionalScore,-1,1);                // 10
         double mTimeframe = clamp(.45*trend + .35*structure + .20*recent5,-1,1);  // 11
-        double mLearned = learner==null ? 0.0 :
-                (learner.recentPerformanceHealthy(h) ? shortBias*.55 : -shortBias*.30); // 12
+        // Learning may support an already-observed direction, but weak recent
+        // performance must never reverse the chart evidence or hard-block all
+        // future signals. Final learning calibration is bounded downstream.
+        double mLearned = learner==null || !learner.recentPerformanceHealthy(h)
+                ?0.0:shortBias*.55;                                                 // 12
 
         double methodScore = clamp(
                 .13*mStructure + .10*mLevel + .11*mCandle + .09*mPriceAction
@@ -345,7 +348,7 @@ public final class TradingBrain {
                     && (Math.signum(pressure.directionalScore)==Math.signum(shortBias) || pressureOverride));
 
         if(maxP>=threshold && consensusOk && historyEntryGate && !conflict && !choppy
-                && !lowQuality && healthy){
+                && !lowQuality){
             label=buy>sell?"BUY":"SELL";
         }
 
@@ -416,7 +419,7 @@ public final class TradingBrain {
             boolean healthy,boolean conflict,boolean choppy,
             boolean agreement){
 
-        if(!healthy) return "Recent learned performance is weak; signal blocked.";
+        if(!healthy) return "Recent learned performance is weak; confidence reduced without blocking the chart setup.";
         if(conflict) return "Trend and short-term momentum disagree.";
         if(choppy) return "Chart is too volatile/choppy for a clean setup.";
         if(!agreement) return "Trend, candle and structure models do not agree.";
@@ -527,7 +530,7 @@ public final class TradingBrain {
             boolean healthy,boolean conflict,boolean choppy,boolean lowQuality,
             boolean agreement,double disagreement,double trend,double accel,
             double breakout,double pullback){
-        if(!healthy)return "PAUSED • RECENT SCORE LOW";
+        if(!healthy)return "LEARNING WEAK • VISUAL GATES ACTIVE";
         if(conflict)return "CONFLICT";
         if(choppy)return "CHOPPY";
         if(lowQuality)return "LOW QUALITY";

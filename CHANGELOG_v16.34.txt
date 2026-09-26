@@ -1,0 +1,8 @@
+AZ CandleScanner v16.34
+
+- Removes the remaining early learning-health hard veto from Safer Mode.
+- Weak recent learning can reduce confidence but cannot reverse chart evidence or permanently block all signals.
+- Pattern Mode gives a confirmed strong newest-closed-candle pattern the 70% Medium Chance floor.
+- Pattern Mode still rejects stale, neutral, unconfirmed and newest-candle-contradictory patterns.
+- The broker banner now shows the remaining NO TRADE reason instead of hiding the active gate.
+- Preserves the existing package, permanent signature, local learning keys and all training history.

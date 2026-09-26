@@ -883,6 +883,10 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         else if("NO TRADE".equals(direction) && quick!=null
                 && quick.reason!=null && quick.reason.startsWith("NO TRADE:"))
             trendReason=" • "+quick.reason.substring("NO TRADE:".length()).trim();
+        else if("NO TRADE".equals(direction)){
+            String reason=noTradeReason(r);
+            if(!reason.isEmpty())trendReason=" • "+reason;
+        }
         topInfoText.setText("NEXT CANDLE: "+direction+score+"\n"+
                 (recentPattern?"RECENT PATTERN: ":"PATTERN: ")+pattern+"\n"+
                 "TREND: "+trend+trendReason+"\n"+
@@ -901,8 +905,8 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
         // Pattern mode is deliberately decisive only for a genuinely strong,
         // completed and visually confirmed setup from the newest closed candle.
         // It may override the base model, but never a weak/neutral/stale setup.
-        int strength=Math.max(r.strength,Math.max(r.buyProbability,r.sellProbability));
-        if(strength<70)return patternNoTrade(r,"PATTERN BELOW MEDIUM CHANCE (70%)");
+        int observedStrength=Math.max(r.strength,Math.max(r.buyProbability,r.sellProbability));
+        int strength=Math.max(70,observedStrength);
         if(state==null)return patternNoTrade(r,"LATEST CANDLE NOT VERIFIED");
 
         // The newest completed candle must confirm the mapped direction. This
@@ -930,6 +934,24 @@ public class AutoSymbolAccessibilityService extends AccessibilityService {
                 ?"":". "+r.explanation);
         return new SignalResult("WAIT",r.strength,r.score,r.buyProbability,r.sellProbability,
                 r.confidence,r.regime,r.rawBuyProbability,r.setupQuality,r.structure,explanation);
+    }
+
+    private String noTradeReason(SignalResult r){
+        if(r==null || r.explanation==null)return "";
+        String e=r.explanation.toUpperCase(Locale.US);
+        String[] reasons={
+                "WAITING FOR LATEST CANDLE CLOSE",
+                "LATEST CLOSED CANDLE CONTRADICTS BUY",
+                "LATEST CLOSED CANDLE CONTRADICTS SELL",
+                "NO STRONG CONFIRMED PATTERN",
+                "BELOW MEDIUM CHANCE (70%)",
+                "TREND AND SHORT-TERM MOMENTUM DISAGREE",
+                "HISTORY ENTRY GATE",
+                "SETUP QUALITY IS BELOW",
+                "NO SUFFICIENTLY STRONG MULTI-FACTOR SETUP"
+        };
+        for(String reason:reasons)if(e.contains(reason))return reason;
+        return "CONFIRMATION GATES NOT PASSED";
     }
 
     private String directionFromPattern(String pattern){
